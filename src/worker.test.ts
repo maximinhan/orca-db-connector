@@ -11,7 +11,10 @@ const local: DbConnection = {
   port: 5432,
   database: 'app',
   user: 'app',
-  agent: true
+  environment: 'local',
+  agent: true,
+  agentWrites: 'ask',
+  dangerous: false
 }
 
 const memory: DbConnection = {
@@ -22,7 +25,10 @@ const memory: DbConnection = {
   port: 0,
   database: ':memory:',
   user: '',
-  agent: true
+  environment: '',
+  agent: true,
+  agentWrites: 'ask',
+  dangerous: false
 }
 
 test('saves a connection in storage and its password in secrets', async () => {
@@ -32,9 +38,9 @@ test('saves a connection in storage and its password in secrets', async () => {
   await worker.request('connections.save', { connection: local, password: 'hunter2' })
 
   assert.deepEqual(await worker.request('connections.list'), { connections: [local] })
-  assert.deepEqual(host.data().storage, { connections: [local] })
+  assert.deepEqual(host.data().storage.connections, [local])
   assert.equal(host.data().secrets['connection.local-pg.password'], 'hunter2')
-  assert.deepEqual(worker.posts, [{ event: 'connections.changed', payload: { count: 1 } }])
+  assert.ok(worker.posts.some((post) => post.event === 'connections.changed' && (post.payload as { count: number }).count === 1))
   assert.deepEqual(worker.refusals, [])
   await worker.deactivate()
 })
@@ -49,7 +55,7 @@ test('removing a connection also drops its password', async () => {
   assert.deepEqual(await worker.request('connections.remove', { id: 'local-pg' }), { removed: true })
   assert.deepEqual(await worker.request('connections.remove', { id: 'local-pg' }), { removed: false })
 
-  assert.deepEqual(host.data().storage, { connections: [] })
+  assert.deepEqual(host.data().storage.connections, [])
   assert.equal(host.data().secrets['connection.local-pg.password'], undefined)
   await worker.deactivate()
 })
@@ -64,7 +70,7 @@ test('refuses an invalid connection', async () => {
   await worker.deactivate()
 })
 
-test('tests, lists the schema of and queries an in-memory SQLite connection', async () => {
+test('tests, lists the schema of, queries and logs an in-memory SQLite connection', async () => {
   const worker = await mountWorker(main, { host: mockHost({ storage: { connections: [memory] } }) })
 
   const tested = await worker.request('connections.test', { id: 'memory' })
@@ -76,8 +82,15 @@ test('tests, lists the schema of and queries an in-memory SQLite connection', as
 
   await assert.rejects(
     worker.request('query.run', { id: 'memory', sql: 'CREATE TABLE t (a)' }),
-    (error: unknown) => error instanceof Error && /only read statements/.test(error.message)
+    (error: unknown) => error instanceof Error && /Allow writes/.test(error.message)
   )
+  const { entries } = await worker.request('log.list')
+  assert.deepEqual(entries.map((entry) => [entry.kind, entry.status]), [
+    ['write', 'denied'],
+    ['read', 'ok']
+  ])
+  assert.deepEqual((await worker.request('log.result', { id: entries[1]!.id })).result?.rows, [{ n: 1, m: 2 }])
+  assert.deepEqual(await worker.request('log.clear'), { cleared: 2 })
   await worker.deactivate()
 })
 
@@ -100,6 +113,7 @@ test('starts the agent gateway and decorates agent launches', async () => {
   const launch = decided.payload as { command: string; env: Record<string, string> }
   assert.match(launch.command, /^claude --mcp-config /)
   assert.equal(launch.env.ORCA_DB_GATEWAY_URL, status.url)
+  assert.equal(launch.env.ORCA_DB_AGENT, 'claude')
   assert.ok(launch.env.ORCA_DB_GATEWAY_TOKEN)
 
   await worker.deactivate()

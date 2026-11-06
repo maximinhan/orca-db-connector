@@ -17,7 +17,10 @@ const connection: DbConnection = {
   port: 0,
   database: file,
   user: '',
-  agent: true
+  environment: '',
+  agent: true,
+  agentWrites: 'ask',
+  dangerous: false
 }
 const options = { connectTimeoutMs: 1000, queryTimeoutMs: 1000 }
 
@@ -56,6 +59,19 @@ test('a write session reports changed rows', async () => {
   assert.equal(result.rowCount, 1)
   assert.deepEqual(result.rows, [])
   assert.match(result.message ?? '', /1 row/)
+  await client.close()
+})
+
+test('a transaction rolls back when a later statement fails', async () => {
+  const client = await sqliteDriver.connect(connection, null, { ...options, readOnly: false })
+  await assert.rejects(
+    client.query("INSERT INTO users (name) VALUES ('tmp'); INSERT INTO nope VALUES (1)", { maxRows: 10, transaction: true }),
+    /no such table/
+  )
+  const count = await client.query("SELECT COUNT(*) AS c FROM users WHERE name = 'tmp'", { maxRows: 1 })
+  assert.deepEqual(count.rows, [{ c: 0 }])
+  const ok = await client.query("INSERT INTO users (name) VALUES ('kept')", { maxRows: 10, transaction: true })
+  assert.equal(ok.rowCount, 1)
   await client.close()
 })
 

@@ -4,7 +4,7 @@
 import { createRequire } from 'node:module'
 import { hostError } from '../errors.ts'
 import type { DbConnection, QueryResult, SchemaTable } from '../protocol.ts'
-import type { ConnectOptions, DbClient, DbDriver, QueryOptions } from './types.ts'
+import { inTransaction, type ConnectOptions, type DbClient, type DbDriver, type QueryOptions } from './types.ts'
 import { changesResult, resultFromArrays } from './values.ts'
 
 type PgField = { name: string }
@@ -61,6 +61,13 @@ class PostgresClient implements DbClient {
   }
 
   async query(sql: string, options: QueryOptions): Promise<QueryResult> {
+    if (options.transaction) {
+      return inTransaction((text) => this.client.query({ text }), () => this.run(sql, options))
+    }
+    return this.run(sql, options)
+  }
+
+  private async run(sql: string, options: QueryOptions): Promise<QueryResult> {
     const started = Date.now()
     const onAbort = () => void this.client.end().catch(() => undefined)
     options.signal?.addEventListener('abort', onAbort, { once: true })

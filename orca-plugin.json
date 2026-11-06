@@ -4,8 +4,8 @@
   "execution": "trusted-worker",
   "id": "db-connector",
   "name": "DB Connector",
-  "version": "0.2.0",
-  "description": "Save PostgreSQL, MySQL and SQLite connections, browse schemas and run queries from a sidebar panel, and let the agents Orca launches query them through a local MCP server. Passwords stay in Orca's encrypted secrets store.",
+  "version": "0.3.0",
+  "description": "Save PostgreSQL, MySQL and SQLite connections, browse schemas and run queries from a sidebar panel, and let the agents Orca launches query them through a local MCP server. Agent writes wait for your approval unless a connection allows them; every query is logged with its rows. Passwords stay in Orca's encrypted secrets store.",
   "author": {
     "name": "maximinhan",
     "url": "https://github.com/maximinhan"
@@ -37,10 +37,18 @@
       {
         "key": "agentAccess",
         "title": "Agent access",
-        "description": "What agents launched from Orca may do through the DB gateway and the orca-db MCP server.",
+        "description": "What agents launched from Orca may do through the DB gateway and the orca-db MCP server. With \"Read and write\", a write still waits for your approval unless the connection allows agent writes at once (never on a dangerous connection).",
         "type": "string",
-        "enum": ["off", "read-only", "read-write"],
-        "enumLabels": ["Off", "Read-only queries", "Read and write"],
+        "enum": [
+          "off",
+          "read-only",
+          "read-write"
+        ],
+        "enumLabels": [
+          "Off",
+          "Read-only queries",
+          "Read and write"
+        ],
         "default": "read-only"
       },
       {
@@ -49,6 +57,15 @@
         "description": "Pass --mcp-config to Claude Code launches so the orca-db tools are available without setup. Other agents get ORCA_DB_GATEWAY_URL, ORCA_DB_GATEWAY_TOKEN and ORCA_DB_MCP_SERVER in their environment.",
         "type": "boolean",
         "default": true
+      },
+      {
+        "key": "approvalTimeoutMs",
+        "title": "Approval timeout (ms)",
+        "description": "How long an agent write waits for your decision in the panel before it fails.",
+        "type": "integer",
+        "default": 300000,
+        "minimum": 10000,
+        "maximum": 1800000
       },
       {
         "key": "queryTimeoutMs",
@@ -71,8 +88,17 @@
     ]
   },
   "capabilities": [
-    { "kind": "storage:own" },
-    { "kind": "secrets:own" },
-    { "kind": "settings:own" }
+    {
+      "kind": "storage:own"
+    },
+    {
+      "kind": "secrets:own"
+    },
+    {
+      "kind": "settings:own"
+    },
+    {
+      "kind": "notifications:show"
+    }
   ]
 }

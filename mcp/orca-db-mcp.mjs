@@ -6,14 +6,14 @@
 import { createInterface } from 'node:readline'
 import { pathToFileURL } from 'node:url'
 
-export const SERVER_INFO = { name: 'orca-db-connector', version: '0.2.0' }
+export const SERVER_INFO = { name: 'orca-db-connector', version: '0.3.0' }
 const PROTOCOL_VERSION = '2025-06-18'
 
 export const TOOLS = [
   {
     name: 'list_connections',
     description:
-      'Lists the database connections saved in Orca DB Connector that agents may use. Each has an id to pass to describe_schema and run_query.',
+      'Lists the database connections saved in Orca DB Connector that agents may use. Each has an id to pass to describe_schema and run_query, an environment label, whether it is marked dangerous, and agentWrites: "always" (writes run at once) or "ask" (the person approves each write in Orca).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }
   },
   {
@@ -29,7 +29,7 @@ export const TOOLS = [
   {
     name: 'run_query',
     description:
-      'Runs SQL on a connection and returns columns and rows as JSON. Unless the person allowed agent writes in the plugin settings, only read statements (SELECT, WITH, SHOW, EXPLAIN, DESCRIBE, PRAGMA) are accepted and the session is read-only. Rows are capped by max_rows and the plugin setting; the result says when it was truncated.',
+      'Runs SQL on a connection and returns columns and rows as JSON. Read statements (SELECT, WITH, SHOW, EXPLAIN, DESCRIBE, PRAGMA) run in a read-only session. A write runs inside a transaction and, unless the connection allows agent writes at once, waits until the person approves it in Orca (this call blocks, possibly for minutes, and fails with not_permitted or timeout when refused). Rows are capped by max_rows and the plugin setting; the result says when it was truncated.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -46,13 +46,18 @@ export const TOOLS = [
 export function createGatewayClient(env = process.env, fetchImpl = fetch) {
   const url = env.ORCA_DB_GATEWAY_URL
   const token = env.ORCA_DB_GATEWAY_TOKEN
+  const agent = env.ORCA_DB_AGENT
   if (!url || !token) {
     throw new Error('ORCA_DB_GATEWAY_URL and ORCA_DB_GATEWAY_TOKEN are not set: start this agent from Orca with the DB Connector plugin enabled')
   }
   return async function call(method, route, body) {
     const response = await fetchImpl(`${url.replace(/\/$/, '')}${route}`, {
       method,
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        ...(agent ? { 'x-orca-agent': agent } : {})
+      },
       body: body === undefined ? undefined : JSON.stringify(body)
     })
     const text = await response.text()
@@ -120,7 +125,7 @@ export async function handleMessage(message, call) {
             capabilities: { tools: {} },
             serverInfo: SERVER_INFO,
             instructions:
-              'Use list_connections first, then describe_schema to learn the tables, then run_query. Queries are read-only unless the person allowed writes in the Orca DB Connector settings.'
+              'Use list_connections first, then describe_schema to learn the tables, then run_query. Reads run at once. A write may wait for the person to approve it in Orca; tell them what you are about to change and why before you send it, and never retry a refused write.'
           }
         }
       case 'ping':

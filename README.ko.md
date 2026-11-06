@@ -12,7 +12,10 @@
 ## 기능
 
 - **패널**: 연결 저장/테스트/삭제, 테이블·뷰·컬럼 목록, SQL 실행과 결과 테이블. **Allow writes** 를
-  켜지 않으면 쓰기 문은 거부됩니다.
+  켜지 않으면 쓰기 문은 거부되고, 쓰기는 트랜잭션 안에서 실행되며, **위험 환경**에서는 한 번 더 확인합니다.
+- **승인과 로그**: 에이전트의 쓰기는 연결에 **Always allow agent writes** 가 켜져 있지 않으면 패널에서
+  **Approve** / **Refuse** 를 기다립니다(데스크톱 알림 포함). 위험 환경 연결은 항상 묻습니다. 패널과
+  에이전트의 모든 쿼리가 **Activity** 로그에 SQL·결과·행과 함께 남습니다.
 - **에이전트**: 워커가 시작할 때마다 새 bearer 토큰으로 루프백 HTTP 게이트웨이를 엽니다.
   `agent.launch.before` 훅이 Orca가 실행하는 모든 에이전트의 환경에 `ORCA_DB_GATEWAY_URL`,
   `ORCA_DB_GATEWAY_TOKEN`, `ORCA_DB_MCP_SERVER` 를 넣고, Claude Code 에는 `--mcp-config` 를 붙여
@@ -26,12 +29,14 @@
 
 | 경로 | 역할 |
 | --- | --- |
-| `orca-plugin.json` | 매니페스트(format 2): `trusted-worker`, 패널 1, 훅 1, 설정 4, capability 3 |
+| `orca-plugin.json` | 매니페스트(format 2): `trusted-worker`, 패널 1, 훅 1, 설정 5, capability 4 |
 | `src/worker.ts` | 워커 진입점(`main`): 패널 요청, 게이트웨이, 런치 훅 |
 | `src/panel.tsx` | 사이드바 패널(components UI, 빌드 없음) |
 | `src/protocol.ts` | 패널 ↔ 워커 계약, 양쪽에서 타입 검사 |
 | `src/connections.ts` | 연결 저장소: 목록은 `storage:own`, 비밀번호는 `secrets:own` |
-| `src/db/service.ts` | 연결 테스트·스키마·쿼리. 기본은 읽기 전용 세션 |
+| `src/db/service.ts` | 연결 테스트·스키마·쿼리. 쓰기 정책, 승인, 로깅 |
+| `src/approvals/queue.ts` | 사용자의 결정을 기다리는 에이전트 쓰기 |
+| `src/log/query-log.ts` | 활동 로그와 최근 쿼리의 결과 행 |
 | `src/sql/classify.ts` | 읽기 전용 세션을 열기 전 SQL 의 읽기/쓰기 분류 |
 | `src/drivers/` | `sqlite.ts`, `postgres.ts`, `mysql.ts` 와 지연 로딩 레지스트리 |
 | `src/gateway/` | 에이전트가 호출하는 루프백 HTTP API |
@@ -44,12 +49,14 @@
 
 | 설정 | 기본값 | 의미 |
 | --- | --- | --- |
-| Agent access | read-only | 게이트웨이와 MCP 도구의 권한: `off`, `read-only`, `read-write` |
+| Agent access | read-only | 게이트웨이와 MCP 도구의 권한: `off`, `read-only`, `read-write`. `read-write` 여도 연결이 허용하지 않으면 쓰기는 승인을 기다림 |
 | Add the MCP server to Claude Code | 켜짐 | Claude Code 실행 명령에 `--mcp-config` 추가 |
+| Approval timeout (ms) | 300000 | 에이전트 쓰기가 사용자의 결정을 기다리는 시간 |
 | Query timeout (ms) | 30000 | 서버 측 문장 타임아웃(PostgreSQL, MySQL) |
 | Max rows per query | 500 | 이 수를 넘는 행은 버리고 결과에 truncated 표시 |
 
-연결마다 **Expose to agents** 체크가 있어, 끄면 패널에서만 쓰는 연결이 됩니다.
+연결마다 **Environment label**(`local`, `dev`, `prod` …), **Expose to agents**, **Always allow agent
+writes**(꺼짐: 에이전트 쓰기마다 묻기), **Dangerous environment**(쓰기는 무조건 묻고 쿼리를 강조)가 있습니다.
 
 ## 개발
 
@@ -77,7 +84,7 @@ npm run build:vendor        # build/package.json 변경 후 vendor/ 재생성
 
 1. `orca plugin validate .` 통과, 커밋·푸시
 2. `orca-plugin.json` 의 `version` 을 올려 커밋한 뒤 태그:
-   `git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0`
+   `git tag -a v0.3.0 -m v0.3.0 && git push origin v0.3.0`
 3. 토픽 추가: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`
 4. https://www.onorca.dev/plugins/maximinhan/orca-db-connector 확인
 

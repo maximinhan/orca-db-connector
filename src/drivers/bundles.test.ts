@@ -20,14 +20,14 @@ const options = { readOnly: true, connectTimeoutMs: 2000, queryTimeoutMs: 2000 }
 test('postgres bundle loads and reports a refused connection', async () => {
   const driver = await loadDriver('postgres')
   assert.equal(driver.label, 'PostgreSQL')
-  const connection: DbConnection = { id: 'pg', name: 'pg', driver: 'postgres', host: '127.0.0.1', port: await closedPort(), database: 'x', user: 'u', agent: true }
+  const connection: DbConnection = { id: 'pg', name: 'pg', driver: 'postgres', host: '127.0.0.1', port: await closedPort(), database: 'x', user: 'u', environment: '', agent: true, agentWrites: 'ask', dangerous: false }
   await assert.rejects(driver.connect(connection, 'p', options), /ECONNREFUSED|connect/i)
 })
 
 test('mysql bundle loads and reports a refused connection', async () => {
   const driver = await loadDriver('mysql')
   assert.equal(driver.label, 'MySQL / MariaDB')
-  const connection: DbConnection = { id: 'my', name: 'my', driver: 'mysql', host: '127.0.0.1', port: await closedPort(), database: 'x', user: 'u', agent: true }
+  const connection: DbConnection = { id: 'my', name: 'my', driver: 'mysql', host: '127.0.0.1', port: await closedPort(), database: 'x', user: 'u', environment: '', agent: true, agentWrites: 'ask', dangerous: false }
   await assert.rejects(driver.connect(connection, 'p', options), /ECONNREFUSED|connect/i)
 })
 

@@ -69,8 +69,15 @@ export function startGateway(deps: GatewayDeps, options: { token?: string; port?
           }
         }
       }
+      // A write may wait minutes for approval; if the agent gives up, the approval is withdrawn.
+      const gone = new AbortController()
+      request.once('close', () => gone.abort())
+      const headers: Record<string, string | undefined> = {}
+      for (const [name, value] of Object.entries(request.headers)) {
+        headers[name] = Array.isArray(value) ? value[0] : value
+      }
       const answer = await handleGatewayRequest(
-        { method: request.method ?? 'GET', path: request.url ?? '/', body },
+        { method: request.method ?? 'GET', path: request.url ?? '/', body, headers, signal: gone.signal },
         deps
       )
       send(response, answer.status, answer.body)

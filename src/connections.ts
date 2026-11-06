@@ -2,7 +2,7 @@
 // (storage:own) and each password in its encrypted secrets (secrets:own), so a panel, a worker
 // restart and the next Orca start all see the same data.
 import { hostError } from './errors.ts'
-import { DB_DRIVER_KINDS, type DbConnection, type DbDriverKind } from './protocol.ts'
+import { DB_DRIVER_KINDS, type AgentWritePolicy, type DbConnection, type DbDriverKind } from './protocol.ts'
 
 export const CONNECTIONS_KEY = 'connections'
 
@@ -26,7 +26,10 @@ function isDriverKind(value: unknown): value is DbDriverKind {
   return typeof value === 'string' && (DB_DRIVER_KINDS as readonly string[]).includes(value)
 }
 
-function isStoredConnection(value: unknown): value is Omit<DbConnection, 'agent'> & { agent?: unknown } {
+type OptionalFields = 'environment' | 'agent' | 'agentWrites' | 'dangerous'
+type StoredConnection = Omit<DbConnection, OptionalFields> & Partial<Record<OptionalFields, unknown>>
+
+function isStoredConnection(value: unknown): value is StoredConnection {
   if (typeof value !== 'object' || value === null) {
     return false
   }
@@ -42,9 +45,32 @@ function isStoredConnection(value: unknown): value is Omit<DbConnection, 'agent'
   )
 }
 
+const ENVIRONMENT_MAX = 32
+
 /** Fills defaults for fields added after a connection was stored. */
-function normalize(stored: Omit<DbConnection, 'agent'> & { agent?: unknown }): DbConnection {
-  return { ...stored, agent: typeof stored.agent === 'boolean' ? stored.agent : true }
+function normalize(stored: StoredConnection): DbConnection {
+  return {
+    id: stored.id,
+    name: stored.name,
+    driver: stored.driver,
+    host: stored.host,
+    port: stored.port,
+    database: stored.database,
+    user: stored.user,
+    environment: typeof stored.environment === 'string' ? stored.environment.trim().slice(0, ENVIRONMENT_MAX) : '',
+    agent: typeof stored.agent === 'boolean' ? stored.agent : true,
+    agentWrites: stored.agentWrites === 'always' ? 'always' : 'ask',
+    dangerous: stored.dangerous === true
+  }
+}
+
+/** Whether a write on this connection must wait for the person, by policy. */
+export function writeNeedsApproval(connection: DbConnection): boolean {
+  return connection.dangerous || connection.agentWrites !== 'always'
+}
+
+export function agentWritePolicy(value: unknown): AgentWritePolicy {
+  return value === 'always' ? 'always' : 'ask'
 }
 
 /** Checks a connection a panel sent and returns it trimmed; throws `invalid_params` otherwise. */
@@ -66,24 +92,19 @@ export function validateConnection(input: unknown): DbConnection {
   if (input.driver === 'sqlite' && input.database.trim() === '') {
     throw hostError('invalid_params', 'a sqlite connection needs the database file path')
   }
-  return {
-    id,
-    name,
-    driver: input.driver,
-    host: input.host.trim(),
-    port: input.port,
-    database: input.database.trim(),
-    user: input.user.trim(),
-    agent: typeof input.agent === 'boolean' ? input.agent : true
+  const normalized = normalize({ ...input, id, name, host: input.host.trim(), database: input.database.trim(), user: input.user.trim() })
+  if (typeof input.environment === 'string' && input.environment.trim().length > ENVIRONMENT_MAX) {
+    throw hostError('invalid_params', `environment label must be at most ${ENVIRONMENT_MAX} characters`)
   }
+  return normalized
 }
 
 export function describeConnection(connection: DbConnection): string {
-  if (connection.driver === 'sqlite') {
-    return `sqlite:${connection.database || '(no file)'}`
-  }
-  const user = connection.user ? `${connection.user}@` : ''
-  return `${connection.driver}://${user}${connection.host}:${connection.port}/${connection.database}`
+  const target =
+    connection.driver === 'sqlite'
+      ? `sqlite:${connection.database || '(no file)'}`
+      : `${connection.driver}://${connection.user ? `${connection.user}@` : ''}${connection.host}:${connection.port}/${connection.database}`
+  return connection.environment ? `[${connection.environment}] ${target}` : target
 }
 
 export class ConnectionStore {

@@ -9,6 +9,10 @@ export type GatewayRequest = {
   /** Path and query, such as `/connections/local/query`. */
   path: string
   body: unknown
+  /** Lowercased header names. */
+  headers?: Record<string, string | undefined>
+  /** The caller went away (the socket closed). */
+  signal?: AbortSignal
 }
 
 export type GatewayResponse = { status: number; body: unknown }
@@ -19,6 +23,9 @@ export type GatewayDeps = {
   agentAccess(): Promise<AgentAccess>
   version: string
 }
+
+/** Header the MCP server sets from ORCA_DB_AGENT so the log says which agent asked. */
+export const AGENT_HEADER = 'x-orca-agent'
 
 const STATUS_BY_CODE: Record<string, number> = {
   invalid_params: 400,
@@ -38,12 +45,17 @@ function errorResponse(error: unknown): GatewayResponse {
 }
 
 function publicConnection(connection: DbConnection) {
-  const { id, name, driver, host, port, database, user } = connection
-  return { id, name, driver, host, port, database, user }
+  const { id, name, driver, host, port, database, user, environment, dangerous, agentWrites } = connection
+  return { id, name, driver, host, port, database, user, environment, dangerous, agentWrites }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function agentName(headers: GatewayRequest['headers']): string | null {
+  const value = headers?.[AGENT_HEADER]?.trim() ?? ''
+  return value === '' ? null : value.slice(0, 64)
 }
 
 export async function handleGatewayRequest(request: GatewayRequest, deps: GatewayDeps): Promise<GatewayResponse> {
@@ -80,7 +92,14 @@ export async function handleGatewayRequest(request: GatewayRequest, deps: Gatewa
           throw hostError('invalid_params', 'body must be {"sql": "..."}')
         }
         const maxRows = typeof request.body.maxRows === 'number' ? request.body.maxRows : undefined
-        const result = await deps.service.query(id, request.body.sql, access, { maxRows })
+        const result = await deps.service.query({
+          id,
+          sql: request.body.sql,
+          source: 'agent',
+          agent: agentName(request.headers),
+          maxRows,
+          signal: request.signal
+        })
         return { status: 200, body: result }
       }
     }

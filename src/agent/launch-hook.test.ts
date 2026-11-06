@@ -16,12 +16,14 @@ test('adds env to every agent and --mcp-config only to Claude Code', () => {
     A: '1',
     ORCA_DB_GATEWAY_URL: 'http://127.0.0.1:4321',
     ORCA_DB_GATEWAY_TOKEN: 'tok',
-    ORCA_DB_MCP_SERVER: '/plugins/db/mcp/orca-db-mcp.mjs'
+    ORCA_DB_MCP_SERVER: '/plugins/db/mcp/orca-db-mcp.mjs',
+    ORCA_DB_AGENT: 'claude'
   })
 
   const codex = decorateAgentLaunch({ agent: 'codex', command: 'codex', env: {} }, deps)
   assert.equal(codex.command, 'codex')
   assert.equal(codex.env.ORCA_DB_GATEWAY_TOKEN, 'tok')
+  assert.equal(codex.env.ORCA_DB_AGENT, 'codex')
 })
 
 test('keeps an --mcp-config the person already passed, and other fields', () => {
@@ -40,7 +42,7 @@ test('mcp config names the server and its env', () => {
       'orca-db': {
         command: '/usr/bin/node',
         args: ['/plugins/db/mcp/orca-db-mcp.mjs'],
-        env: { ELECTRON_RUN_AS_NODE: '1', ORCA_DB_GATEWAY_URL: 'http://127.0.0.1:4321', ORCA_DB_GATEWAY_TOKEN: 'tok' }
+        env: { ELECTRON_RUN_AS_NODE: '1', ORCA_DB_GATEWAY_URL: 'http://127.0.0.1:4321', ORCA_DB_GATEWAY_TOKEN: 'tok', ORCA_DB_AGENT: 'claude' }
       }
     }
   })

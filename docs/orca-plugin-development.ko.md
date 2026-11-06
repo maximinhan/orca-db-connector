@@ -48,6 +48,7 @@ DB 커넥터는 `trusted-worker` 입니다. capability 는 실제로 쓰는 것�
 | `storage:own` | 연결 목록(JSON) 저장 |
 | `secrets:own` | 비밀번호를 OS 키링 기반 암호화 저장소에 보관 (`secrets.protection` 이 `unavailable` 이면 `secrets.set` 실패) |
 | `settings:own` | `contributes.settings` 로 선언한 설정을 Settings 화면에서 편집 |
+| `notifications:show` | 에이전트 쓰기가 승인을 기다릴 때 데스크톱 알림 |
 
 추가로 쓸 수 있는 것: `notifications:show`(데스크톱 알림), `workspace:read`/`workspace:write`,
 `terminal:send`/`terminal:read`, `agent:read`/`agent:launch`, `appearance:write`.
@@ -188,7 +189,7 @@ Orca 검증기를 대체하지 않습니다. CI(`.github/workflows/validate.yml`
 ### 7-1. 커뮤니티 디렉터리 (onorca.dev/plugins) — 기본 경로
 
 1. `orca plugin validate .` 통과, 저장소 소유자(`maximinhan`)의 공개 GitHub 저장소에 커밋·푸시.
-2. `orca-plugin.json` 의 `version` 을 올려 커밋한 뒤 그 커밋에 태그: `git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0`
+2. `orca-plugin.json` 의 `version` 을 올려 커밋한 뒤 그 커밋에 태그: `git tag -a v0.3.0 -m v0.3.0 && git push origin v0.3.0`
    (`vX.Y.Z` 형식).
 3. 저장소에 `orca-plugin` 토픽 추가: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`.
 4. https://www.onorca.dev/plugins/maximinhan/orca-db-connector 에서 등재 상태 확인.

@@ -12,7 +12,12 @@ The install key is `maximinhan.db-connector` (Orca names the publisher after the
 ## What it does
 
 - **Panel**: save, test and remove connections; list tables, views and columns; run SQL with
-  results in a table. Writes are refused unless you tick **Allow writes**.
+  results in a table. Writes are refused unless you tick **Allow writes**, run inside a
+  transaction, and on a **dangerous environment** need a second press.
+- **Approval and log**: an agent's write waits for your **Approve** / **Refuse** in the panel
+  (with a desktop notification) unless the connection says **Always allow agent writes**; a
+  dangerous connection always asks. Every query from the panel or an agent lands in the
+  **Activity** log with its SQL, outcome and rows.
 - **Agents**: the worker runs a loopback HTTP gateway with a fresh bearer token each start. The
   `agent.launch.before` hook puts `ORCA_DB_GATEWAY_URL`, `ORCA_DB_GATEWAY_TOKEN` and
   `ORCA_DB_MCP_SERVER` into the environment of every agent Orca starts, and passes
@@ -27,12 +32,14 @@ The install key is `maximinhan.db-connector` (Orca names the publisher after the
 
 | Path | Role |
 | --- | --- |
-| `orca-plugin.json` | Manifest (format 2): `trusted-worker`, one panel, one hook, four settings, three capabilities |
+| `orca-plugin.json` | Manifest (format 2): `trusted-worker`, one panel, one hook, five settings, four capabilities |
 | `src/worker.ts` | Worker entry (`main`): panel requests, the gateway, the launch hook |
 | `src/panel.tsx` | The sidebar panel (components UI, no build step) |
 | `src/protocol.ts` | Panel ↔ worker contract, type-checked on both sides |
 | `src/connections.ts` | Connection registry: list in `storage:own`, passwords in `secrets:own` |
-| `src/db/service.ts` | Test, schema and query over a connection; read-only sessions by default |
+| `src/db/service.ts` | Test, schema and query over a connection; the write policy, approvals and logging |
+| `src/approvals/queue.ts` | Agent writes waiting for the person's decision |
+| `src/log/query-log.ts` | The activity log and the rows of recent queries |
 | `src/sql/classify.ts` | Read/write classification of SQL before a read-only session is opened |
 | `src/drivers/` | `sqlite.ts`, `postgres.ts`, `mysql.ts` and the lazy registry |
 | `src/gateway/` | The loopback HTTP API agents call |
@@ -45,12 +52,15 @@ The install key is `maximinhan.db-connector` (Orca names the publisher after the
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| Agent access | read-only | `off`, `read-only` or `read-write` for the gateway and MCP tools |
+| Agent access | read-only | `off`, `read-only` or `read-write` for the gateway and MCP tools; with `read-write`, a write still waits for approval unless the connection allows it |
 | Add the MCP server to Claude Code | on | Append `--mcp-config` to Claude Code launches |
+| Approval timeout (ms) | 300000 | How long an agent write waits for your decision |
 | Query timeout (ms) | 30000 | Server-side statement timeout (PostgreSQL, MySQL) |
 | Max rows per query | 500 | Rows past this are dropped and the result marked truncated |
 
-Each connection also has **Expose to agents**; untick it to keep a connection panel-only.
+Each connection also has an **Environment label** (`local`, `dev`, `prod`, …), **Expose to
+agents**, **Always allow agent writes** (off: each agent write asks you) and **Dangerous
+environment** (writes always ask, queries are highlighted).
 
 ## Develop
 
@@ -79,7 +89,7 @@ to re-run.
 
 1. `orca plugin validate .` passes; commit and push.
 2. Bump `version` in `orca-plugin.json`, commit, tag and push the tag:
-   `git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0`
+   `git tag -a v0.3.0 -m v0.3.0 && git push origin v0.3.0`
 3. Add the topic: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`
 4. Check https://www.onorca.dev/plugins/maximinhan/orca-db-connector
 

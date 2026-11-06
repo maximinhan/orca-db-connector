@@ -5,8 +5,9 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { hostError } from '../errors.ts'
 import type { DbConnection, SchemaTable } from '../protocol.ts'
+import { classifySql } from '../sql/classify.ts'
 import { changesResult, resultFromArrays } from './values.ts'
-import type { ConnectOptions, DbClient, DbDriver, QueryOptions } from './types.ts'
+import { inTransaction, type ConnectOptions, type DbClient, type DbDriver, type QueryOptions } from './types.ts'
 
 // The `node:sqlite` surface this driver uses, typed here so the plugin's tsconfig needs no @types/node.
 type StatementSync = {
@@ -60,7 +61,20 @@ class SqliteClient implements DbClient {
   }
 
   async query(sql: string, options: QueryOptions): Promise<import('../protocol.ts').QueryResult> {
+    if (options.transaction) {
+      return inTransaction(async (text) => this.db.exec(text), () => this.run(sql, options))
+    }
+    return this.run(sql, options)
+  }
+
+  private async run(sql: string, options: QueryOptions): Promise<import('../protocol.ts').QueryResult> {
     const started = Date.now()
+    const { statements } = classifySql(sql)
+    if (statements > 1) {
+      // prepare() takes one statement; a script runs through exec() and reports no rows.
+      this.db.exec(sql)
+      return changesResult(0, `${statements} statements executed`, Date.now() - started)
+    }
     const statement = this.db.prepare(sql)
     const columns = statement.columns().map((column) => column.name)
     if (columns.length === 0) {

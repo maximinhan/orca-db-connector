@@ -7,14 +7,16 @@ import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { ApprovalQueue } from '../src/approvals/queue.ts'
 import { DbService, DEFAULT_SETTINGS } from '../src/db/service.ts'
 import { sqliteDriver } from '../src/drivers/sqlite.ts'
+import { QueryLog } from '../src/log/query-log.ts'
 import { startGateway } from '../src/gateway/server.ts'
 import { handleMessage, TOOLS } from './orca-db-mcp.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const dir = mkdtempSync(path.join(tmpdir(), 'orca-db-mcp-'))
-const connection = { id: 'local', name: 'Local', driver: 'sqlite', host: '', port: 0, database: path.join(dir, 'a.db'), user: '', agent: true }
+const connection = { id: 'local', name: 'Local', driver: 'sqlite', host: '', port: 0, database: path.join(dir, 'a.db'), user: '', environment: 'test', agent: true, agentWrites: 'ask', dangerous: false }
 let gateway
 
 before(async () => {
@@ -26,7 +28,9 @@ before(async () => {
     service: new DbService({
       getConnection: async (id) => (id === 'local' ? connection : null),
       password: async () => null,
-      settings: async () => DEFAULT_SETTINGS
+      settings: async () => DEFAULT_SETTINGS,
+      approvals: new ApprovalQueue({ timeoutMs: 1000 }),
+      log: new QueryLog()
     }),
     listConnections: async () => [connection],
     agentAccess: async () => 'read-only',
@@ -41,7 +45,7 @@ after(async () => {
 
 function startServer() {
   const child = spawn(process.execPath, [path.join(here, 'orca-db-mcp.mjs')], {
-    env: { ...process.env, ORCA_DB_GATEWAY_URL: gateway.url, ORCA_DB_GATEWAY_TOKEN: gateway.token },
+    env: { ...process.env, ORCA_DB_GATEWAY_URL: gateway.url, ORCA_DB_GATEWAY_TOKEN: gateway.token, ORCA_DB_AGENT: 'claude' },
     stdio: ['pipe', 'pipe', 'inherit']
   })
   const lines = createInterface({ input: child.stdout })
@@ -82,6 +86,7 @@ test('initialize, list tools, call tools over stdio', async () => {
 
   const list = await server.request('tools/call', { name: 'list_connections', arguments: {} })
   assert.equal(list.result.structuredContent.connections[0].id, 'local')
+  assert.equal(list.result.structuredContent.connections[0].agentWrites, 'ask')
 
   const schema = await server.request('tools/call', { name: 'describe_schema', arguments: { connection: 'local' } })
   assert.equal(schema.result.structuredContent.tables[0].name, 't')

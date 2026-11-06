@@ -21,6 +21,7 @@ export type AgentLaunchDeps = {
 export const ENV_GATEWAY_URL = 'ORCA_DB_GATEWAY_URL'
 export const ENV_GATEWAY_TOKEN = 'ORCA_DB_GATEWAY_TOKEN'
 export const ENV_MCP_SERVER = 'ORCA_DB_MCP_SERVER'
+export const ENV_AGENT = 'ORCA_DB_AGENT'
 
 /** Orca agent ids whose CLI is Claude Code (accepts `--mcp-config`). */
 export function isClaudeCodeAgent(agent: string): boolean {
@@ -36,7 +37,8 @@ export function mcpServerDefinition(deps: Pick<AgentLaunchDeps, 'gatewayUrl' | '
       // When execPath is Orca's own binary, this makes it run as plain Node; a real node ignores it.
       ELECTRON_RUN_AS_NODE: '1',
       [ENV_GATEWAY_URL]: deps.gatewayUrl,
-      [ENV_GATEWAY_TOKEN]: deps.token
+      [ENV_GATEWAY_TOKEN]: deps.token,
+      [ENV_AGENT]: 'claude'
     }
   }
 }
@@ -54,7 +56,8 @@ export function decorateAgentLaunch(event: AgentLaunchEvent, deps: AgentLaunchDe
     ...event.env,
     [ENV_GATEWAY_URL]: deps.gatewayUrl,
     [ENV_GATEWAY_TOKEN]: deps.token,
-    [ENV_MCP_SERVER]: deps.mcpServerPath
+    [ENV_MCP_SERVER]: deps.mcpServerPath,
+    [ENV_AGENT]: event.agent
   }
   let command = event.command
   if (deps.claudeMcpConfigPath !== null && isClaudeCodeAgent(event.agent) && !/--mcp-config\b/.test(command)) {

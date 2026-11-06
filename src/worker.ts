@@ -7,18 +7,21 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { claudeMcpConfig, decorateAgentLaunch, type AgentLaunchEvent } from './agent/launch-hook.ts'
+import { ApprovalQueue } from './approvals/queue.ts'
 import { ConnectionStore, validateConnection } from './connections.ts'
 import { DbService, DEFAULT_SETTINGS, type DbServiceSettings } from './db/service.ts'
 import { errorMessage } from './errors.ts'
 import { startGateway, type Gateway } from './gateway/server.ts'
+import { QueryLog } from './log/query-log.ts'
 import type { AgentAccess, GatewayStatus } from './protocol.ts'
 
-const VERSION = '0.2.0'
+const VERSION = '0.3.0'
 const AGENT_ACCESS_VALUES: readonly AgentAccess[] = ['off', 'read-only', 'read-write']
+const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 
 export const MCP_SERVER_PATH = path.resolve(import.meta.dirname, '..', 'mcp', 'orca-db-mcp.mjs')
 
-type Settings = DbServiceSettings & { agentAccess: AgentAccess; claudeMcp: boolean }
+type Settings = DbServiceSettings & { claudeMcp: boolean; approvalTimeoutMs: number }
 
 function integer(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback
@@ -32,13 +35,16 @@ function readSettings(raw: unknown): Settings {
     maxRows: integer(settings.maxRows, DEFAULT_SETTINGS.maxRows),
     connectTimeoutMs: DEFAULT_SETTINGS.connectTimeoutMs,
     agentAccess: (AGENT_ACCESS_VALUES as readonly unknown[]).includes(access) ? (access as AgentAccess) : 'read-only',
-    claudeMcp: settings.claudeMcp !== false
+    claudeMcp: settings.claudeMcp !== false,
+    approvalTimeoutMs: integer(settings.approvalTimeoutMs, DEFAULT_APPROVAL_TIMEOUT_MS)
   }
 }
 
 let gateway: Gateway | null = null
 let gatewayError: string | null = null
 let mcpConfigPath: string | null = null
+let approvals: ApprovalQueue | null = null
+let log: QueryLog | null = null
 
 function writeClaudeMcpConfig(url: string, token: string): string {
   const dir = path.join(tmpdir(), 'orca-db-connector')
@@ -60,11 +66,40 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
     })
   })
 
+  const queue = new ApprovalQueue({
+    get timeoutMs() {
+      return settings.approvalTimeoutMs
+    },
+    onChange: (requests) => orca.panels.post('approvals.changed', { count: requests.length }),
+    onRequest: (request) => {
+      if (!orca.grantedCapabilities.includes('notifications:show')) {
+        return
+      }
+      const where = request.environment ? `${request.connectionName} (${request.environment})` : request.connectionName
+      void orca.host
+        .call('notifications.show', {
+          title: `${request.agent ?? 'An agent'} wants to write to ${where}`,
+          body: `${request.dangerous ? 'DANGEROUS environment. ' : ''}Open the DB Connector panel to approve or refuse: ${request.sql.slice(0, 120)}`
+        })
+        .catch((error: unknown) => orca.log(`notification failed: ${errorMessage(error)}`))
+    }
+  })
+  approvals = queue
+
+  const queryLog = new QueryLog({
+    store: orca.storage,
+    onChange: (entries) => orca.panels.post('log.changed', { count: entries.length })
+  })
+  await queryLog.load()
+  log = queryLog
+
   const service = new DbService({
     getConnection: (id) => store.get(id),
     password: (id) => store.password(id),
     settings: async () => settings,
-    log: (message) => orca.log(message)
+    approvals: queue,
+    log: queryLog,
+    trace: (message) => orca.log(message)
   })
 
   const announce = async (): Promise<void> => {
@@ -87,8 +122,8 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   })
   orca.panels.handle('connections.test', ({ id }) => service.test(id))
   orca.panels.handle('schema.list', async ({ id }) => ({ tables: await service.schema(id) }))
-  orca.panels.handle('query.run', ({ id, sql, allowWrites }, { signal }) =>
-    service.query(id, sql, allowWrites === true ? 'read-write' : 'read-only', { signal })
+  orca.panels.handle('query.run', ({ id, sql, allowWrites, confirmed }, { signal }) =>
+    service.query({ id, sql, source: 'panel', allowWrites: allowWrites === true, confirmed: confirmed === true, signal })
   )
   orca.panels.handle(
     'gateway.status',
@@ -100,6 +135,11 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       error: gatewayError
     })
   )
+  orca.panels.handle('approvals.list', async () => ({ approvals: queue.list() }))
+  orca.panels.handle('approvals.decide', async ({ id, approve }) => ({ decided: queue.decide(id, approve === true) }))
+  orca.panels.handle('log.list', async () => ({ entries: queryLog.list() }))
+  orca.panels.handle('log.result', async ({ id }) => ({ result: queryLog.result(id) }))
+  orca.panels.handle('log.clear', async () => ({ cleared: queryLog.clear() }))
 
   // The agent gateway: loopback HTTP with a per-start token.
   try {
@@ -147,6 +187,8 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
 }
 
 export async function deactivate(): Promise<void> {
+  approvals?.dispose()
+  approvals = null
   if (gateway !== null) {
     await gateway.close()
     gateway = null
@@ -155,4 +197,6 @@ export async function deactivate(): Promise<void> {
     rmSync(mcpConfigPath, { force: true })
     mcpConfigPath = null
   }
+  await log?.flush()
+  log = null
 }
