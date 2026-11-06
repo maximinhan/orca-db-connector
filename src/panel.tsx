@@ -20,6 +20,7 @@ import {
   Row,
   Select,
   set,
+  Spinner,
   Stack,
   Table,
   Text,
@@ -584,8 +585,6 @@ export default function Panel() {
       <Approvals />
       <GatewaySection />
 
-      {message ? <Callout tone={message.tone}>{message.text}</Callout> : null}
-
       {list.length === 0 ? (
         <EmptyState
           title="No connections yet"
@@ -721,7 +720,9 @@ export default function Panel() {
         <Button variant="ghost" icon="add" onPress={clearDraft} disabled={working || selected === null}>
           New
         </Button>
+        {working ? <Spinner label="Working" /> : null}
       </Row>
+      {message ? <Callout tone={message.tone}>{message.text}</Callout> : null}
 
       {current === null ? null : (
         <Stack gap="sm">

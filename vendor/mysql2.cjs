@@ -5772,29 +5772,85 @@ var require_umd = __commonJS({
 var require_iconv_lite = __commonJS({
   "shims/iconv-lite.cjs"(exports2) {
     "use strict";
-    function nodeEncoding(encoding) {
-      const name = String(encoding).toLowerCase().replace(/[-_]/g, "");
-      if (name === "utf8" || name === "utf8mb4") return "utf8";
-      if (name === "latin1" || name === "iso88591" || name === "cp1252" || name === "win1252") return "latin1";
-      if (name === "ascii" || name === "usascii") return "ascii";
-      if (name === "ucs2" || name === "utf16le") return "utf16le";
-      if (name === "binary") return "latin1";
-      return null;
+    var DECODER_LABELS = {
+      utf8: "utf-8",
+      utf8mb4: "utf-8",
+      cesu8: "utf-8",
+      ascii: "utf-8",
+      latin1: "windows-1252",
+      cp1252: "windows-1252",
+      latin2: "iso-8859-2",
+      latin5: "iso-8859-9",
+      latin7: "iso-8859-13",
+      greek: "iso-8859-7",
+      hebrew: "iso-8859-8",
+      cp1250: "windows-1250",
+      cp1251: "windows-1251",
+      cp1256: "windows-1256",
+      cp1257: "windows-1257",
+      cp866: "ibm866",
+      koi8r: "koi8-r",
+      koi8u: "koi8-u",
+      tis620: "windows-874",
+      macintosh: "macintosh",
+      macroman: "macintosh",
+      euckr: "euc-kr",
+      eucjp: "euc-jp",
+      eucjpms: "euc-jp",
+      sjis: "shift_jis",
+      cp932: "shift_jis",
+      gbk: "gbk",
+      gb2312: "gbk",
+      gb18030: "gb18030",
+      big5: "big5",
+      ucs2: "utf-16le",
+      "utf16-le": "utf-16le",
+      utf16: "utf-16be"
+    };
+    var BUFFER_ENCODERS = { utf8: "utf8", utf8mb4: "utf8", cesu8: "utf8", ascii: "ascii", latin1: "latin1", binary: "latin1", ucs2: "utf16le", "utf16-le": "utf16le" };
+    function normalize(encoding) {
+      return String(encoding).toLowerCase().replace(/[^a-z0-9-]/g, "");
     }
-    function unsupported(encoding) {
-      return new Error(`charset "${encoding}" is not supported by the bundled MySQL driver; use utf8mb4, latin1, ascii or ucs2`);
+    function unsupported(encoding, what) {
+      return new Error(`the bundled MySQL driver cannot ${what} the "${encoding}" charset; use utf8mb4 on the connection`);
     }
-    exports2.encodingExists = (encoding) => nodeEncoding(encoding) !== null;
+    function decoderFor(encoding) {
+      const label = DECODER_LABELS[normalize(encoding)];
+      if (label === void 0) {
+        throw unsupported(encoding, "decode");
+      }
+      try {
+        return new TextDecoder(label);
+      } catch {
+        throw unsupported(encoding, "decode");
+      }
+    }
+    exports2.encodingExists = (encoding) => normalize(encoding) in DECODER_LABELS || normalize(encoding) in BUFFER_ENCODERS;
+    exports2.getDecoder = (encoding) => {
+      const decoder = decoderFor(encoding);
+      return {
+        write: (buffer) => decoder.decode(buffer, { stream: true }),
+        end: () => decoder.decode()
+      };
+    };
     exports2.decode = (buffer, encoding) => {
-      const name = nodeEncoding(encoding);
-      if (name === null) throw unsupported(encoding);
-      return Buffer.from(buffer).toString(name);
+      const native = BUFFER_ENCODERS[normalize(encoding)];
+      if (native !== void 0) {
+        return Buffer.from(buffer).toString(native);
+      }
+      return decoderFor(encoding).decode(buffer);
     };
-    exports2.encode = (text, encoding) => {
-      const name = nodeEncoding(encoding);
-      if (name === null) throw unsupported(encoding);
-      return Buffer.from(String(text), name);
+    exports2.getEncoder = (encoding) => {
+      const native = BUFFER_ENCODERS[normalize(encoding)];
+      if (native === void 0) {
+        throw unsupported(encoding, "encode text for");
+      }
+      return {
+        write: (text) => Buffer.from(String(text), native),
+        end: () => Buffer.alloc(0)
+      };
     };
+    exports2.encode = (text, encoding) => exports2.getEncoder(encoding).write(text);
   }
 });
 

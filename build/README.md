@@ -18,8 +18,10 @@ bundled package.
 
 Shims under `shims/` replace two packages inside `mysql2`:
 
-- `iconv-lite`: Node's `Buffer` decodes utf8, latin1, ascii and ucs2; other MySQL charsets fail with
-  a clear message instead of shipping every legacy encoding table.
+- `iconv-lite`: decoding goes through Node's `TextDecoder` (full ICU), which covers the charsets
+  MySQL names (utf8/cesu8, latin1/cp125x, euckr, sjis, gbk, big5, koi8, …); encoding supports what
+  `Buffer` can (utf8, latin1, ascii, ucs2). Anything else fails with a clear message instead of
+  shipping every legacy encoding table.
 - `aws-ssl-profiles`: the RDS certificate bundle; pass explicit `ssl` options instead of a profile.
 
 `pg-native` stays external: `pg` loads it lazily and never needs it.
