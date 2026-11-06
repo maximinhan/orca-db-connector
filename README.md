@@ -1,61 +1,89 @@
 # DB Connector for Orca
 
-[Orca](https://onorca.dev) (Stably의 AI 코딩 에이전트 오케스트레이션 IDE) 플러그인입니다.
-오른쪽 사이드바 패널에서 데이터베이스 연결을 저장하고, 연결을 테스트하고, 읽기 전용 쿼리를
-실행하는 것이 목표입니다. 비밀번호는 Orca의 암호화된 secrets 저장소에만 보관됩니다.
+[한국어](README.ko.md)
 
-설치 키는 `maximinhan.db-connector` 입니다 (publisher는 저장소 소유자에서 Orca가 자동으로 정합니다).
+A plugin for [Orca](https://onorca.dev), Stably's IDE for running AI coding agents in parallel.
+It adds a right-sidebar panel where you save PostgreSQL, MySQL/MariaDB and SQLite connections,
+browse their schemas and run queries, and it gives every agent Orca launches the same access
+through a local gateway and an MCP server. Passwords live only in Orca's encrypted secrets store.
 
-> 현재 상태: **스캐폴드(준비 단계)**. 연결 저장/삭제/목록과 패널 UI는 구현되어 있고,
-> 실제 DB 드라이버(PostgreSQL, MySQL, SQLite)는 `src/drivers/index.ts` 의 레지스트리에
-> 아직 등록되지 않았습니다. 개발 절차 전체는 [docs/orca-plugin-development.md](docs/orca-plugin-development.md) 에 있습니다.
+The install key is `maximinhan.db-connector` (Orca names the publisher after the repository owner).
 
-## 구조
+## What it does
 
-| 경로 | 역할 |
+- **Panel**: save, test and remove connections; list tables, views and columns; run SQL with
+  results in a table. Writes are refused unless you tick **Allow writes**.
+- **Agents**: the worker runs a loopback HTTP gateway with a fresh bearer token each start. The
+  `agent.launch.before` hook puts `ORCA_DB_GATEWAY_URL`, `ORCA_DB_GATEWAY_TOKEN` and
+  `ORCA_DB_MCP_SERVER` into the environment of every agent Orca starts, and passes
+  `--mcp-config` to Claude Code so its `orca-db` tools (`list_connections`, `describe_schema`,
+  `run_query`) work with no setup. Agent access is **read-only by default** and enforced by the
+  database session itself, not only by the plugin. See [docs/agent-access.md](docs/agent-access.md).
+- **Drivers**: SQLite through Node's built-in `node:sqlite`; PostgreSQL (`pg`) and MySQL
+  (`mysql2`) bundled into `vendor/` by `build/build.mjs`, because an installed plugin cannot carry
+  `node_modules`.
+
+## Layout
+
+| Path | Role |
 | --- | --- |
-| `orca-plugin.json` | 매니페스트(format 2). `trusted-worker` 프로필, 패널 1개, 설정 2개, capability 3개 |
-| `src/worker.ts` | 워커 진입점(`main`). `plugin.request` 를 처리하고 DB에 접속한다 (Node 프로세스) |
-| `src/panel.tsx` | 사이드바 패널(components UI). 빌드 단계 없음, Orca가 로드 시 트랜스파일 |
-| `src/protocol.ts` | 패널 ↔ 워커 요청/이벤트 계약 (양쪽이 타입 검사) |
-| `src/connections.ts` | 연결 저장소: 목록은 `storage:own`, 비밀번호는 `secrets:own` |
-| `src/drivers/index.ts` | 드라이버 레지스트리 (다음 단계에서 드라이버 추가) |
-| `src/*.test.ts(x)`, `src/panel.check.ts` | `orca plugin test .` / `orca plugin check .` 용 |
-| `scripts/check-manifest.mjs` | Orca 없이 매니페스트를 공식 JSON Schema로 사전 점검 |
-| `.github/workflows/validate.yml` | CI: 스키마 점검 + Orca 자체 검증기(`pnpm validate:plugin`) |
+| `orca-plugin.json` | Manifest (format 2): `trusted-worker`, one panel, one hook, four settings, three capabilities |
+| `src/worker.ts` | Worker entry (`main`): panel requests, the gateway, the launch hook |
+| `src/panel.tsx` | The sidebar panel (components UI, no build step) |
+| `src/protocol.ts` | Panel ↔ worker contract, type-checked on both sides |
+| `src/connections.ts` | Connection registry: list in `storage:own`, passwords in `secrets:own` |
+| `src/db/service.ts` | Test, schema and query over a connection; read-only sessions by default |
+| `src/sql/classify.ts` | Read/write classification of SQL before a read-only session is opened |
+| `src/drivers/` | `sqlite.ts`, `postgres.ts`, `mysql.ts` and the lazy registry |
+| `src/gateway/` | The loopback HTTP API agents call |
+| `src/agent/launch-hook.ts` | What `agent.launch.before` adds to an agent's command and environment |
+| `mcp/orca-db-mcp.mjs` | The stdio MCP server agents run (plain Node, no dependencies) |
+| `build/` → `vendor/` | Driver bundles and their licences (`THIRD_PARTY_NOTICES.txt`) |
+| `docs/` | [Plugin development procedure](docs/orca-plugin-development.md), [agent access](docs/agent-access.md) |
 
-## 개발
+## Settings
 
-Orca 데스크톱 앱이 설치되어 있어야 합니다 (`brew install --cask stablyai/orca/orca` 또는 https://onorca.dev/download).
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| Agent access | read-only | `off`, `read-only` or `read-write` for the gateway and MCP tools |
+| Add the MCP server to Claude Code | on | Append `--mcp-config` to Claude Code launches |
+| Query timeout (ms) | 30000 | Server-side statement timeout (PostgreSQL, MySQL) |
+| Max rows per query | 500 | Rows past this are dropped and the result marked truncated |
+
+Each connection also has **Expose to agents**; untick it to keep a connection panel-only.
+
+## Develop
+
+You need the Orca desktop app (`brew install --cask stablyai/orca/orca` or
+https://onorca.dev/download) and Node 22.18 or newer for the plain-Node tests.
 
 ```sh
-orca plugin validate .      # 매니페스트와 진입 파일을 Orca와 같은 규칙으로 검사
-orca plugin dev watch .     # 이 폴더를 개발 플러그인으로 로드하고 로그/리로드를 출력 (Ctrl-C로 언로드)
-orca plugin types .         # .orca/types 에 타이핑 생성 (dev watch 가 자동으로 수행)
-npx tsc -p .                # 타입 검사
-orca plugin test .          # src/*.test.ts(x) 를 Node에서 실행
-orca plugin check .         # src/panel.check.ts 시나리오별로 패널을 렌더링해 오류 보고
-orca plugin shot <key>      # 패널을 PNG로 캡처 (.orca/shots/)
+orca plugin validate .      # the manifest and entries, with Orca's own rules
+orca plugin dev watch .     # load this folder as a development plugin, print logs, reload on save
+orca plugin types .         # write .orca/types (dev watch does it too)
+npx tsc -p .                # type check
+orca plugin test .          # every *.test.ts(x) in Node with orca/testing
+orca plugin check .         # render src/panel.check.ts scenarios and report errors
+orca plugin shot <key>      # PNG of the panel in .orca/shots/
+
+npm run test:node           # the tests that need no Orca: drivers, gateway, hook, MCP server, worker wiring
+npm run check:manifest      # manifest against the published JSON Schema, without Orca
+npm run build:vendor        # rebuild vendor/ after changing build/package.json
 ```
 
-처음 로드할 때 Orca는 이 플러그인이 받는 권한(`trusted-worker`, storage/secrets/settings)을 보여주고
-승인을 요구합니다. 터미널이 아닌 곳에서 실행하면 `--approve <fingerprint>` 를 붙여 다시 실행하라는
-명령을 출력합니다.
+The first load asks you to approve what the plugin gets (`trusted-worker`, storage, secrets,
+settings, the launch hook). Outside a terminal, Orca prints the `--approve <fingerprint>` command
+to re-run.
 
-Orca 없이 매니페스트만 점검하려면:
+## Publish (community directory)
 
-```sh
-npm ci
-npm run check:manifest
-```
+1. `orca plugin validate .` passes; commit and push.
+2. Bump `version` in `orca-plugin.json`, commit, tag and push the tag:
+   `git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0`
+3. Add the topic: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`
+4. Check https://www.onorca.dev/plugins/maximinhan/orca-db-connector
 
-## 배포 (커뮤니티 디렉터리)
+## License
 
-1. `orca plugin validate .` 통과, 변경 사항 커밋/푸시
-2. `orca-plugin.json` 의 `version` 을 올려 커밋한 뒤 태그: `git tag -a v0.1.0 -m v0.1.0 && git push origin v0.1.0`
-3. 저장소에 `orca-plugin` 토픽 추가: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`
-4. 목록 확인: https://www.onorca.dev/plugins/maximinhan/orca-db-connector
-
-## 라이선스
-
-MIT. [LICENSE](LICENSE) 참고.
+MIT, see [LICENSE](LICENSE). Bundled driver licences are in
+[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).

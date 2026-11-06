@@ -10,7 +10,19 @@ const local: DbConnection = {
   host: 'localhost',
   port: 5432,
   database: 'app',
-  user: 'app'
+  user: 'app',
+  agent: true
+}
+
+const memory: DbConnection = {
+  id: 'memory',
+  name: 'In-memory SQLite',
+  driver: 'sqlite',
+  host: '',
+  port: 0,
+  database: ':memory:',
+  user: '',
+  agent: true
 }
 
 test('saves a connection in storage and its password in secrets', async () => {
@@ -52,12 +64,43 @@ test('refuses an invalid connection', async () => {
   await worker.deactivate()
 })
 
-test('reports a missing driver instead of throwing on test', async () => {
-  const worker = await mountWorker(main, { host: mockHost({ storage: { connections: [local] } }) })
+test('tests, lists the schema of and queries an in-memory SQLite connection', async () => {
+  const worker = await mountWorker(main, { host: mockHost({ storage: { connections: [memory] } }) })
 
-  const result = await worker.request('connections.test', { id: 'local-pg' })
+  const tested = await worker.request('connections.test', { id: 'memory' })
+  assert.equal(tested.ok, true)
 
-  assert.equal(result.ok, false)
-  assert.match(result.message, /postgres driver/)
+  const rows = await worker.request('query.run', { id: 'memory', sql: 'SELECT 1 AS n, 2 AS m' })
+  assert.deepEqual(rows.columns, ['n', 'm'])
+  assert.deepEqual(rows.rows, [{ n: 1, m: 2 }])
+
+  await assert.rejects(
+    worker.request('query.run', { id: 'memory', sql: 'CREATE TABLE t (a)' }),
+    (error: unknown) => error instanceof Error && /only read statements/.test(error.message)
+  )
+  await worker.deactivate()
+})
+
+test('starts the agent gateway and decorates agent launches', async () => {
+  const worker = await mountWorker(main)
+
+  const status = await worker.request('gateway.status')
+  assert.equal(status.running, true)
+  assert.match(status.url ?? '', /^http:\/\/127\.0\.0\.1:\d+$/)
+  assert.equal(status.agentAccess, 'read-only')
+
+  const decided = await worker.hooks.fire('agent.launch.before', {
+    agent: 'claude',
+    workspaceId: null,
+    workspaceKind: null,
+    command: 'claude',
+    env: {}
+  })
+  assert.equal(decided.decision, 'continue')
+  const launch = decided.payload as { command: string; env: Record<string, string> }
+  assert.match(launch.command, /^claude --mcp-config /)
+  assert.equal(launch.env.ORCA_DB_GATEWAY_URL, status.url)
+  assert.ok(launch.env.ORCA_DB_GATEWAY_TOKEN)
+
   await worker.deactivate()
 })

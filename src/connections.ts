@@ -1,11 +1,20 @@
 // Worker-side registry of saved connections. The list lives in the plugin's own storage
 // (storage:own) and each password in its encrypted secrets (secrets:own), so a panel, a worker
 // restart and the next Orca start all see the same data.
-import type { OrcaWorkerApi } from 'orca/worker'
-import { hostError } from './errors'
-import { DB_DRIVER_KINDS, type DbConnection, type DbDriverKind } from './protocol'
+import { hostError } from './errors.ts'
+import { DB_DRIVER_KINDS, type DbConnection, type DbDriverKind } from './protocol.ts'
 
 export const CONNECTIONS_KEY = 'connections'
+
+/** The subset of the worker `orca` object this store needs (so tests can pass a fake). */
+export type ConnectionStoreHost = {
+  storage: { get(key: string): Promise<unknown>; set(key: string, value: unknown): Promise<void> }
+  secrets: {
+    get(key: string): Promise<string | null>
+    set(key: string, value: string): Promise<void>
+    delete(key: string): Promise<void>
+  }
+}
 
 export function passwordSecretKey(id: string): string {
   return `connection.${id}.password`
@@ -17,7 +26,7 @@ function isDriverKind(value: unknown): value is DbDriverKind {
   return typeof value === 'string' && (DB_DRIVER_KINDS as readonly string[]).includes(value)
 }
 
-function isConnection(value: unknown): value is DbConnection {
+function isStoredConnection(value: unknown): value is Omit<DbConnection, 'agent'> & { agent?: unknown } {
   if (typeof value !== 'object' || value === null) {
     return false
   }
@@ -33,9 +42,14 @@ function isConnection(value: unknown): value is DbConnection {
   )
 }
 
+/** Fills defaults for fields added after a connection was stored. */
+function normalize(stored: Omit<DbConnection, 'agent'> & { agent?: unknown }): DbConnection {
+  return { ...stored, agent: typeof stored.agent === 'boolean' ? stored.agent : true }
+}
+
 /** Checks a connection a panel sent and returns it trimmed; throws `invalid_params` otherwise. */
 export function validateConnection(input: unknown): DbConnection {
-  if (!isConnection(input)) {
+  if (!isStoredConnection(input)) {
     throw hostError('invalid_params', 'connection needs id, name, driver, host, port, database and user')
   }
   const id = input.id.trim()
@@ -49,6 +63,9 @@ export function validateConnection(input: unknown): DbConnection {
   if (!Number.isInteger(input.port) || input.port < 0 || input.port > 65535) {
     throw hostError('invalid_params', `port ${input.port} is not between 0 and 65535`)
   }
+  if (input.driver === 'sqlite' && input.database.trim() === '') {
+    throw hostError('invalid_params', 'a sqlite connection needs the database file path')
+  }
   return {
     id,
     name,
@@ -56,7 +73,8 @@ export function validateConnection(input: unknown): DbConnection {
     host: input.host.trim(),
     port: input.port,
     database: input.database.trim(),
-    user: input.user.trim()
+    user: input.user.trim(),
+    agent: typeof input.agent === 'boolean' ? input.agent : true
   }
 }
 
@@ -69,11 +87,15 @@ export function describeConnection(connection: DbConnection): string {
 }
 
 export class ConnectionStore {
-  constructor(private readonly orca: OrcaWorkerApi) {}
+  private readonly host: ConnectionStoreHost
+
+  constructor(host: ConnectionStoreHost) {
+    this.host = host
+  }
 
   async list(): Promise<DbConnection[]> {
-    const stored = await this.orca.storage.get(CONNECTIONS_KEY)
-    return Array.isArray(stored) ? stored.filter(isConnection) : []
+    const stored = await this.host.storage.get(CONNECTIONS_KEY)
+    return Array.isArray(stored) ? stored.filter(isStoredConnection).map(normalize) : []
   }
 
   async get(id: string): Promise<DbConnection | null> {
@@ -89,12 +111,12 @@ export class ConnectionStore {
     } else {
       list[index] = connection
     }
-    await this.orca.storage.set(CONNECTIONS_KEY, list)
+    await this.host.storage.set(CONNECTIONS_KEY, list)
     if (typeof password === 'string') {
       if (password === '') {
-        await this.orca.secrets.delete(passwordSecretKey(connection.id))
+        await this.host.secrets.delete(passwordSecretKey(connection.id))
       } else {
-        await this.orca.secrets.set(passwordSecretKey(connection.id), password)
+        await this.host.secrets.set(passwordSecretKey(connection.id), password)
       }
     }
     return connection
@@ -106,13 +128,13 @@ export class ConnectionStore {
     if (next.length === list.length) {
       return false
     }
-    await this.orca.storage.set(CONNECTIONS_KEY, next)
-    await this.orca.secrets.delete(passwordSecretKey(id))
+    await this.host.storage.set(CONNECTIONS_KEY, next)
+    await this.host.secrets.delete(passwordSecretKey(id))
     return true
   }
 
   async password(id: string): Promise<string | null> {
-    const value = await this.orca.secrets.get(passwordSecretKey(id))
+    const value = await this.host.secrets.get(passwordSecretKey(id))
     return typeof value === 'string' ? value : null
   }
 }

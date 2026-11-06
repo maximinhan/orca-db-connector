@@ -15,10 +15,10 @@ env:
   ORCA_REF: 554a16f32864f9e523520b927ac3b249767f3d0c
 
 jobs:
-  manifest-schema:
-    name: Manifest schema pre-check
+  tests:
+    name: Manifest pre-check and Node tests
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,6 +29,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check:manifest
+      # Drivers, SQL classification, gateway, launch hook, MCP server and worker wiring, no Orca needed.
+      - run: npm run test:node
+      # vendor/ must be what build/ produces from its lockfile.
+      - name: Check vendor/ is up to date
+        run: |
+          npm run build:vendor
+          git diff --exit-code -- vendor THIRD_PARTY_NOTICES.txt
 
   orca-validate:
     name: orca plugin validate (Orca's own validator)

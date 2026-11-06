@@ -1,1 +1,3 @@
 * -text
+vendor/** linguist-generated=true -diff
+THIRD_PARTY_NOTICES.txt linguist-generated=true

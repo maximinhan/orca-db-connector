@@ -4,8 +4,8 @@
   "execution": "trusted-worker",
   "id": "db-connector",
   "name": "DB Connector",
-  "version": "0.1.0",
-  "description": "Save database connections, test them and run read-only queries from a sidebar panel. Passwords stay in Orca's encrypted secrets store.",
+  "version": "0.2.0",
+  "description": "Save PostgreSQL, MySQL and SQLite connections, browse schemas and run queries from a sidebar panel, and let the agents Orca launches query them through a local MCP server. Passwords stay in Orca's encrypted secrets store.",
   "author": {
     "name": "maximinhan",
     "url": "https://github.com/maximinhan"
@@ -13,7 +13,7 @@
   "repository": "https://github.com/maximinhan/orca-db-connector",
   "license": "MIT",
   "engines": {
-    "orca": ">=1.4.247"
+    "orca": ">=1.4.248"
   },
   "pluginApi": 1,
   "main": "src/worker.ts",
@@ -27,11 +27,33 @@
         "ui": "components"
       }
     ],
+    "hooks": [
+      {
+        "event": "agent.launch.before",
+        "onError": "pass"
+      }
+    ],
     "settings": [
+      {
+        "key": "agentAccess",
+        "title": "Agent access",
+        "description": "What agents launched from Orca may do through the DB gateway and the orca-db MCP server.",
+        "type": "string",
+        "enum": ["off", "read-only", "read-write"],
+        "enumLabels": ["Off", "Read-only queries", "Read and write"],
+        "default": "read-only"
+      },
+      {
+        "key": "claudeMcp",
+        "title": "Add the MCP server to Claude Code",
+        "description": "Pass --mcp-config to Claude Code launches so the orca-db tools are available without setup. Other agents get ORCA_DB_GATEWAY_URL, ORCA_DB_GATEWAY_TOKEN and ORCA_DB_MCP_SERVER in their environment.",
+        "type": "boolean",
+        "default": true
+      },
       {
         "key": "queryTimeoutMs",
         "title": "Query timeout (ms)",
-        "description": "A query that runs longer than this is cancelled.",
+        "description": "A query that runs longer than this is cancelled by the server (PostgreSQL and MySQL).",
         "type": "integer",
         "default": 30000,
         "minimum": 1000,

@@ -16,6 +16,8 @@ export type DbConnection = {
   port: number
   database: string
   user: string
+  /** Whether agents launched from Orca may use this connection through the gateway. */
+  agent: boolean
 }
 
 export type DbCell = string | number | boolean | null
@@ -23,16 +25,47 @@ export type DbCell = string | number | boolean | null
 export type QueryResult = {
   columns: string[]
   rows: Record<string, DbCell>[]
+  /** Rows returned, or rows changed by a statement that returns none. */
   rowCount: number
-  /** True when rows past the `maxRows` setting were dropped. */
+  /** True when rows past `maxRows` were dropped. */
   truncated: boolean
   durationMs: number
+  /** The server's status line for a statement without rows, such as "INSERT 0 3". */
+  message?: string
+}
+
+export type SchemaColumn = {
+  name: string
+  type: string
+  nullable: boolean
+  primaryKey: boolean
+}
+
+export type SchemaTable = {
+  /** Schema or database name; null where the engine has none (SQLite). */
+  schema: string | null
+  name: string
+  kind: 'table' | 'view'
+  columns: SchemaColumn[]
 }
 
 export type ConnectionTestResult = {
   ok: boolean
   message: string
   durationMs: number
+}
+
+/** What agents may do through the gateway; the `agentAccess` setting. */
+export type AgentAccess = 'off' | 'read-only' | 'read-write'
+
+export type GatewayStatus = {
+  running: boolean
+  /** `http://127.0.0.1:<port>` while running. */
+  url: string | null
+  agentAccess: AgentAccess
+  /** Absolute path of the stdio MCP server agents run. */
+  mcpServerPath: string
+  error: string | null
 }
 
 declare module 'orca' {
@@ -49,8 +82,12 @@ declare module 'orca' {
     'connections.remove': { input: { id: string }; output: { removed: boolean } }
     /** Opens the connection once and closes it again. */
     'connections.test': { input: { id: string }; output: ConnectionTestResult }
-    /** Runs one SQL statement and answers at most `maxRows` rows. */
-    'query.run': { input: { id: string; sql: string }; output: QueryResult }
+    /** Tables, views and their columns. */
+    'schema.list': { input: { id: string }; output: { tables: SchemaTable[] } }
+    /** Runs SQL; writes are refused unless `allowWrites` is true. */
+    'query.run': { input: { id: string; sql: string; allowWrites?: boolean }; output: QueryResult }
+    /** Whether the agent gateway is up and what agents may do. */
+    'gateway.status': { output: GatewayStatus }
   }
   // oxlint-disable-next-line typescript/consistent-type-definitions -- declaration merging needs an interface
   interface PluginPanelEvents {

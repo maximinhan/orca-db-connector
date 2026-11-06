@@ -1,0 +1,16 @@
+{
+  "name": "orca-db-connector-vendor-build",
+  "private": true,
+  "type": "module",
+  "description": "Bundles the PostgreSQL and MySQL drivers into ../vendor (see README.md).",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "mysql2": "3.15.3",
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

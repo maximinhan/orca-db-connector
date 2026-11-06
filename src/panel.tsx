@@ -5,9 +5,12 @@ import {
   Badge,
   Button,
   Callout,
+  Checkbox,
+  Collapsible,
   EmptyState,
   Heading,
   Input,
+  KeyValue,
   List,
   ListItem,
   plugin,
@@ -16,10 +19,20 @@ import {
   Select,
   set,
   Stack,
+  Table,
   Text,
+  Textarea,
+  Tree,
   type PanelContext
 } from 'orca'
-import { DB_DRIVER_KINDS, type DbConnection, type DbDriverKind } from './protocol'
+import {
+  DB_DRIVER_KINDS,
+  type DbConnection,
+  type DbDriverKind,
+  type GatewayStatus,
+  type QueryResult,
+  type SchemaTable
+} from './protocol'
 
 type Note = { tone: 'neutral' | 'success' | 'danger'; text: string }
 
@@ -29,6 +42,7 @@ const DRIVER_OPTIONS = [
   { value: 'sqlite', label: 'SQLite (file)' }
 ]
 const DEFAULT_PORTS: Record<DbDriverKind, number> = { postgres: 5432, mysql: 3306, sqlite: 0 }
+const ACCESS_LABELS = { off: 'off', 'read-only': 'read-only', 'read-write': 'read and write' }
 
 /** What the worker last answered; filled by setup() and after each change. */
 const connections = atom<DbConnection[]>([])
@@ -36,6 +50,7 @@ const connections = atom<DbConnection[]>([])
 const selectedId = atom<string | null>('selectedId', null, { persist: 'plugin' })
 const note = atom<Note | null>(null)
 const busy = atom(false)
+const gateway = atom<GatewayStatus | null>(null)
 
 // Keyed memory atoms: a half-typed form survives a hot reload while developing.
 const draftName = atom('draft.name', '')
@@ -45,6 +60,14 @@ const draftPort = atom('draft.port', '5432')
 const draftDatabase = atom('draft.database', '')
 const draftUser = atom('draft.user', '')
 const draftPassword = atom('draft.password', '')
+const draftAgent = atom('draft.agent', true)
+
+// Query console.
+const sql = atom('sql', '')
+const allowWrites = atom(false)
+const result = atom<QueryResult | null>(null)
+const queryError = atom<string | null>(null)
+const schema = atom<SchemaTable[] | null>(null)
 
 function describe(connection: DbConnection): string {
   if (connection.driver === 'sqlite') {
@@ -67,6 +90,10 @@ async function refresh(): Promise<void> {
   set(connections, answer.connections)
 }
 
+async function refreshGateway(): Promise<void> {
+  set(gateway, await plugin.request('gateway.status'))
+}
+
 function clearDraft(): void {
   set(selectedId, null)
   set(draftName, '')
@@ -76,7 +103,11 @@ function clearDraft(): void {
   set(draftDatabase, '')
   set(draftUser, '')
   set(draftPassword, '')
+  set(draftAgent, true)
   set(note, null)
+  set(result, null)
+  set(queryError, null)
+  set(schema, null)
 }
 
 function select(connection: DbConnection): void {
@@ -88,7 +119,11 @@ function select(connection: DbConnection): void {
   set(draftDatabase, connection.database)
   set(draftUser, connection.user)
   set(draftPassword, '')
+  set(draftAgent, connection.agent)
   set(note, null)
+  set(result, null)
+  set(queryError, null)
+  set(schema, null)
 }
 
 function changeDriver(value: string): void {
@@ -115,7 +150,8 @@ async function save(): Promise<void> {
     host: read(draftHost).trim(),
     port,
     database: read(draftDatabase).trim(),
-    user: read(draftUser).trim()
+    user: read(draftUser).trim(),
+    agent: read(draftAgent)
   }
   const password = read(draftPassword)
   set(busy, true)
@@ -144,8 +180,8 @@ async function test(): Promise<void> {
   set(busy, true)
   set(note, { tone: 'neutral', text: 'Connecting…' })
   try {
-    const result = await plugin.request('connections.test', { id }, { timeoutMs: 60_000 })
-    set(note, { tone: result.ok ? 'success' : 'danger', text: `${result.message} (${result.durationMs} ms)` })
+    const answer = await plugin.request('connections.test', { id }, { timeoutMs: 60_000 })
+    set(note, { tone: answer.ok ? 'success' : 'danger', text: `${answer.message} (${answer.durationMs} ms)` })
   } catch (error) {
     set(note, { tone: 'danger', text: errorText(error) })
   } finally {
@@ -171,6 +207,42 @@ async function remove(): Promise<void> {
   }
 }
 
+async function runQuery(): Promise<void> {
+  const id = read(selectedId)
+  const text = read(sql).trim()
+  if (id === null || text === '') {
+    return
+  }
+  set(busy, true)
+  set(queryError, null)
+  try {
+    const answer = await plugin.request('query.run', { id, sql: text, allowWrites: read(allowWrites) }, { timeoutMs: 120_000 })
+    set(result, answer)
+  } catch (error) {
+    set(result, null)
+    set(queryError, errorText(error))
+  } finally {
+    set(busy, false)
+  }
+}
+
+async function loadSchema(): Promise<void> {
+  const id = read(selectedId)
+  if (id === null) {
+    return
+  }
+  set(busy, true)
+  set(queryError, null)
+  try {
+    const answer = await plugin.request('schema.list', { id }, { timeoutMs: 60_000 })
+    set(schema, answer.tables)
+  } catch (error) {
+    set(queryError, errorText(error))
+  } finally {
+    set(busy, false)
+  }
+}
+
 /** Runs once before the first render; what it pushes to `subscriptions` ends with the panel. */
 export function setup(ctx: PanelContext): void {
   ctx.subscriptions.push(
@@ -179,6 +251,92 @@ export function setup(ctx: PanelContext): void {
     })
   )
   void refresh().catch((error) => set(note, { tone: 'danger', text: errorText(error) }))
+  void refreshGateway().catch(() => set(gateway, null))
+}
+
+function GatewaySection() {
+  const status = read(gateway)
+  if (status === null) {
+    return null
+  }
+  if (!status.running) {
+    return (
+      <Callout tone="warning" title="Agent gateway is not running">
+        {status.error ?? 'The worker could not start the local gateway. See orca plugin logs.'}
+      </Callout>
+    )
+  }
+  return (
+    <Collapsible title="Agent access" description={`Gateway ${status.url}, ${ACCESS_LABELS[status.agentAccess]}`}>
+      <Stack gap="sm">
+        <KeyValue
+          label="Agent gateway"
+          items={[
+            { label: 'Gateway', value: status.url ?? '', code: true },
+            { label: 'Access', value: ACCESS_LABELS[status.agentAccess] },
+            { label: 'MCP server', value: status.mcpServerPath, code: true }
+          ]}
+        />
+        <Text muted size="xs">
+          Agents launched from Orca get ORCA_DB_GATEWAY_URL, ORCA_DB_GATEWAY_TOKEN and ORCA_DB_MCP_SERVER;
+          Claude Code also gets the orca-db MCP tools. Change access in the plugin settings.
+        </Text>
+      </Stack>
+    </Collapsible>
+  )
+}
+
+function SchemaTree() {
+  const tables = read(schema)
+  if (tables === null) {
+    return null
+  }
+  if (tables.length === 0) {
+    return <Text muted>No tables or views.</Text>
+  }
+  return (
+    <Tree
+      label="Tables and views"
+      items={tables.map((table) => ({
+        key: `${table.schema ?? ''}.${table.name}`,
+        label: table.schema ? `${table.schema}.${table.name}` : table.name,
+        description: `${table.kind}, ${table.columns.length} columns`,
+        icon: table.kind === 'view' ? 'file' : 'database',
+        children: table.columns.map((column) => ({
+          key: `${table.schema ?? ''}.${table.name}.${column.name}`,
+          label: column.name,
+          description: `${column.type}${column.primaryKey ? ', primary key' : ''}${column.nullable ? '' : ', not null'}`
+        }))
+      }))}
+    />
+  )
+}
+
+function ResultTable() {
+  const answer = read(result)
+  if (answer === null) {
+    return null
+  }
+  if (answer.columns.length === 0) {
+    return (
+      <Text tone="success">
+        {answer.message ?? `${answer.rowCount} row(s) changed`} ({answer.durationMs} ms)
+      </Text>
+    )
+  }
+  return (
+    <Stack gap="xs">
+      <Table
+        label="Query result"
+        columns={answer.columns.map((column) => ({ key: column, label: column, minWidth: 'xs' }))}
+        rows={answer.rows.map((row, index) => ({ key: String(index), cells: row }))}
+        emptyText="No rows"
+      />
+      <Text muted size="xs">
+        {answer.rowCount} row(s){answer.truncated ? ', truncated at the Max rows setting' : ''} in {answer.durationMs} ms
+      </Text>
+    </Stack>
+  )
 }
 
 export default function Panel() {
@@ -187,12 +345,15 @@ export default function Panel() {
   const message = read(note)
   const working = read(busy)
   const isSqlite = read(draftDriver) === 'sqlite'
+  const failure = read(queryError)
   return (
     <Stack gap="md">
       <Row justify="between">
         <Heading>Connections</Heading>
         <Badge tone={list.length > 0 ? 'accent' : 'neutral'}>{list.length} saved</Badge>
       </Row>
+
+      <GatewaySection />
 
       {message ? <Callout tone={message.tone}>{message.text}</Callout> : null}
 
@@ -208,7 +369,7 @@ export default function Panel() {
             <ListItem
               key={connection.id}
               title={connection.name}
-              description={describe(connection)}
+              description={`${describe(connection)}${connection.agent ? '' : ' (hidden from agents)'}`}
               icon="database"
               current={connection.id === selected}
               onPress={() => select(connection)}
@@ -219,12 +380,7 @@ export default function Panel() {
 
       <Heading level={3}>{selected === null ? 'New connection' : 'Edit connection'}</Heading>
       <Input label="Name" value={read(draftName)} onChange={(value) => set(draftName, value)} />
-      <Select
-        label="Driver"
-        value={read(draftDriver)}
-        options={DRIVER_OPTIONS}
-        onChange={changeDriver}
-      />
+      <Select label="Driver" value={read(draftDriver)} options={DRIVER_OPTIONS} onChange={changeDriver} />
       {isSqlite ? null : (
         <Row gap="xs">
           <Input label="Host" value={read(draftHost)} onChange={(value) => set(draftHost, value)} />
@@ -233,12 +389,11 @@ export default function Panel() {
       )}
       <Input
         label={isSqlite ? 'Database file' : 'Database'}
+        placeholder={isSqlite ? '~/data/app.db' : ''}
         value={read(draftDatabase)}
         onChange={(value) => set(draftDatabase, value)}
       />
-      {isSqlite ? null : (
-        <Input label="User" value={read(draftUser)} onChange={(value) => set(draftUser, value)} />
-      )}
+      {isSqlite ? null : <Input label="User" value={read(draftUser)} onChange={(value) => set(draftUser, value)} />}
       {isSqlite ? null : (
         <Input
           label="Password"
@@ -248,32 +403,56 @@ export default function Panel() {
           onChange={(value) => set(draftPassword, value)}
         />
       )}
+      <Checkbox
+        label="Expose to agents"
+        description="Agents launched from Orca may list, describe and query this connection."
+        checked={read(draftAgent)}
+        onChange={(checked) => set(draftAgent, checked)}
+      />
 
       <Row gap="xs" wrap>
         <Button icon="check" onPress={() => void save()} disabled={working}>
           Save
         </Button>
-        <Button
-          variant="outline"
-          icon="play"
-          onPress={() => void test()}
-          disabled={working || selected === null}
-        >
+        <Button variant="outline" icon="play" onPress={() => void test()} disabled={working || selected === null}>
           Test
         </Button>
-        <Button
-          variant="ghost"
-          tone="danger"
-          icon="delete"
-          onPress={() => void remove()}
-          disabled={working || selected === null}
-        >
+        <Button variant="ghost" tone="danger" icon="delete" onPress={() => void remove()} disabled={working || selected === null}>
           Remove
         </Button>
         <Button variant="ghost" icon="add" onPress={clearDraft} disabled={working || selected === null}>
           New
         </Button>
       </Row>
+
+      {selected === null ? null : (
+        <Stack gap="sm">
+          <Heading level={3}>Query</Heading>
+          <Textarea
+            label="SQL"
+            labelHidden
+            placeholder="SELECT * FROM … (Cmd/Ctrl+Enter runs it)"
+            rows={4}
+            value={read(sql)}
+            onChange={(value) => set(sql, value)}
+            onSubmit={() => void runQuery()}
+          />
+          <Row gap="xs" wrap justify="between">
+            <Row gap="xs">
+              <Button icon="play" onPress={() => void runQuery()} disabled={working || read(sql).trim() === ''}>
+                Run
+              </Button>
+              <Button variant="outline" icon="search" onPress={() => void loadSchema()} disabled={working}>
+                Schema
+              </Button>
+            </Row>
+            <Checkbox label="Allow writes" checked={read(allowWrites)} onChange={(checked) => set(allowWrites, checked)} />
+          </Row>
+          {failure ? <Callout tone="danger">{failure}</Callout> : null}
+          <ResultTable />
+          <SchemaTree />
+        </Stack>
+      )}
 
       <Text muted size="xs">
         Passwords are kept in Orca's encrypted secrets store and never leave this machine.

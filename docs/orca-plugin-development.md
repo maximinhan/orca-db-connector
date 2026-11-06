@@ -1,205 +1,263 @@
-# Orca 플러그인 개발 절차
+# Orca plugin development procedure
 
-이 문서는 Orca(https://onorca.dev, GitHub `stablyai/orca`) 플러그인을 이 저장소에서 개발하고 배포하는
-절차를 공식 문서 기준으로 정리한 것입니다. 모든 내용의 출처는 `stablyai/orca` 저장소
-커밋 `554a16f3` (2026-11-05) 와 `stablyai/orca-plugins` 커밋 `1a464704` (2026-11-03) 입니다.
+[한국어](orca-plugin-development.ko.md)
 
-| 출처 (stablyai/orca) | 내용 |
+How a plugin for Orca (https://onorca.dev, GitHub `stablyai/orca`) is developed and published from
+this repository, as the official documentation describes it. Every statement below comes from the
+`stablyai/orca` repository at commit `554a16f3` (2026-11-05) and `stablyai/orca-plugins` at
+commit `1a464704` (2026-11-03).
+
+| Source (stablyai/orca) | Covers |
 | --- | --- |
-| `docs/reference/plugin-authoring.md` | 작성 → 로드 → 검증 → 디렉터리 등록 → 카탈로그 배포 전체 흐름 |
-| `docs/reference/plugin-manifest.md`, `docs/schemas/plugins/orca-plugin.v2.schema.json` | 매니페스트 필드 전체와 JSON Schema |
-| `docs/reference/plugin-host-api.md` | 워커/패널이 부를 수 있는 호스트 API, 이벤트, 훅, 오류 코드 |
-| `docs/reference/plugin-declarative-ui.md` | components 패널(TSX) 작성법, 컴포넌트 카탈로그, 테스트 |
-| `docs/reference/plugin-listing-policy.md` | 디렉터리/카탈로그 등재 정책 |
-| `examples/plugins/hello-worker-panel`, `src/cli/plugin-authoring/plugin-worker-panel-template.ts` | 이 저장소 스캐폴드의 원형 |
-| (stablyai/orca-plugins) `CONTRIBUTING.md`, `REVIEW_POLICY.md`, `plugins/sqlite-browser` | 공식 카탈로그 운영 방식, 리뷰 기준, DB 계열 공식 플러그인 선례 |
+| `docs/reference/plugin-authoring.md` | Write → load → validate → list in the directory → publish to a catalog |
+| `docs/reference/plugin-manifest.md`, `docs/schemas/plugins/orca-plugin.v2.schema.json` | Every manifest field and the JSON Schema |
+| `docs/reference/plugin-host-api.md` | Host methods a worker or panel may call, events, hooks, error codes |
+| `docs/reference/plugin-declarative-ui.md` | Components (TSX) panels, the component catalog, testing |
+| `docs/reference/plugin-listing-policy.md` | Rules for the directory and the catalogs |
+| `examples/plugins/hello-worker-panel`, `src/cli/plugin-authoring/plugin-worker-panel-template.ts` | What this repository's layout is modelled on |
+| (stablyai/orca-plugins) `CONTRIBUTING.md`, `REVIEW_POLICY.md`, `plugins/sqlite-browser` | How the official catalog is run, review criteria, a DB-related official plugin |
 
-## 0. 결론 요약
+## 0. Summary
 
-- Orca 플러그인은 **TypeScript/JavaScript** 로만 만듭니다. 워커는 Orca가 띄우는 별도 Node 프로세스
-  (Electron 바이너리를 `ELECTRON_RUN_AS_NODE` 로 실행), 패널은 샌드박스 웹뷰에서 돌아갑니다.
-  Spring/Kotlin 은 쓸 수 없습니다. (필요하다면 Kotlin 서버를 따로 두고 워커가 HTTP로 호출하는 구조는 가능합니다.)
-- DB 커넥터처럼 **네트워크/DB 소켓**을 여는 기능은 `trusted-worker` 프로필의 워커에서만 가능합니다.
-  패널 프레임은 네트워크가 완전히 막혀 있습니다.
-- 플러그인은 `orca-plugin.json` 이 루트에 있는 폴더(사실상 Git 저장소 하나)이고, 커뮤니티 배포는
-  **GitHub 태그 + `orca-plugin` 토픽**만으로 자동 등재됩니다. PR 로 공식 카탈로그에 넣는 방식은 거부됩니다.
-- 이 저장소는 `orca plugin create <dir> --template worker-panel` 이 만드는 구조를 그대로 따릅니다.
+- Orca plugins are **TypeScript/JavaScript only**. The worker is a separate Node process Orca
+  starts (its own Electron binary run with `ELECTRON_RUN_AS_NODE`); panels run in a sandboxed
+  webview. Spring/Kotlin cannot be used for the plugin itself (a Kotlin service the worker calls
+  over HTTP would be possible).
+- Anything that opens **network or database sockets**, like a DB connector, needs the
+  `trusted-worker` profile: panel frames have no network at all.
+- A plugin is a folder with `orca-plugin.json` at its root, in practice one Git repository.
+  Community publishing is automatic from a **GitHub tag plus the `orca-plugin` topic**; pull
+  requests adding plugins to the official catalog are closed.
+- This repository follows the layout of `orca plugin create <dir> --template worker-panel`, plus
+  a hook, a gateway and bundled drivers.
 
-## 1. 실행 프로필과 권한 설계
+## 1. Execution profile and capabilities
 
-`execution` 은 플러그인이 요구하는 최대 권한이며, 사용자가 설치 시 승인하는 범위를 결정합니다. 가장 낮은
-것을 고릅니다.
+`execution` is the most authority the plugin needs and decides what the user approves. Pick the
+lowest that fits.
 
-| 프로필 | 허용 | 비고 |
+| Profile | Allows | Note |
 | --- | --- | --- |
-| `data` | 테마, 터미널 테마, 아이콘 테마, 문법, 번역 | 원클릭 설치 |
-| `declarative` | 명령(Orca 내장 액션 실행), 단축키, VM 레시피, 상태바 항목 | 활성화 전 리뷰 |
-| `sandboxed-ui` | 패널, 커스텀 에디터 (샌드박스 프레임, `window.orca` 로만 통신) | 네트워크 없음 |
-| `trusted-worker` | `main` 워커(Node), 이벤트 구독, 훅, 워커 명령 | 설치 시 개별 승인 필수 |
+| `data` | Themes, terminal themes, icon themes, syntaxes, translations | One-click install |
+| `declarative` | Commands running Orca actions, shortcuts, VM recipes, status bar items | Reviewed before enabling |
+| `sandboxed-ui` | Panels and custom editors (sandboxed frame, `window.orca` only) | No network |
+| `trusted-worker` | A `main` worker (Node), event subscriptions, hooks, worker commands | Approved per install |
 
-DB 커넥터는 `trusted-worker` 입니다. capability 는 실제로 쓰는 것만 선언합니다 (리뷰 기준: "각 capability 가
-설명되고 사용될 것").
+DB Connector is `trusted-worker`. Declare only the capabilities you use (review rule: "each
+requested capability is explained and used").
 
-| capability | 이 플러그인에서의 용도 |
+| Capability | Used for |
 | --- | --- |
-| `storage:own` | 연결 목록(JSON) 저장 |
-| `secrets:own` | 비밀번호를 OS 키링 기반 암호화 저장소에 보관 (`secrets.protection` 이 `unavailable` 이면 `secrets.set` 실패) |
-| `settings:own` | `contributes.settings` 로 선언한 쿼리 타임아웃/최대 행 수를 Settings 화면에서 편집 |
+| `storage:own` | The connection list (JSON) |
+| `secrets:own` | Passwords in the OS-keyring-backed encrypted store (`secrets.set` fails when `secrets.protection` is `unavailable`) |
+| `settings:own` | The settings declared in `contributes.settings`, edited in Orca's Settings |
 
-추가로 쓸 수 있는 것: `notifications:show`(데스크톱 알림), `workspace:read`/`workspace:write`,
-`terminal:send`/`terminal:read`, `agent:read`/`agent:launch`, `appearance:write`.
+Also available: `notifications:show`, `workspace:read`/`workspace:write`, `terminal:send`/
+`terminal:read`, `agent:read`/`agent:launch`, `appearance:write`.
 
-예약되어 아직 쓸 수 없는 기여점(빈 배열만 허용): `connections`(호스트가 로그인을 대행하는 계정 연결),
-`mcpServers`, `taskSources`, `skills`, `hooks`(에이전트 라이프사이클), `agentHarnesses`, `sidebarCards`.
-DB 접속 정보를 에이전트에 MCP 로 노출하는 기능은 `mcpServers` 포맷이 정해진 뒤에야 가능합니다.
+Reserved contribution points (empty arrays only): `connections`, `mcpServers`, `taskSources`,
+`skills`, `hooks` (agent lifecycle, distinct from the manifest `contributes.hooks` below),
+`agentHarnesses`, `sidebarCards`. Offering a database to agents as an MCP server through
+`mcpServers` becomes possible once its format ships; until then this plugin injects
+`--mcp-config` from the `agent.launch.before` hook (see [agent-access.md](agent-access.md)).
 
-## 2. 매니페스트 규칙 (`orca-plugin.json`)
+## 2. Manifest rules (`orca-plugin.json`)
 
-- `"manifestVersion": 2` 필수. 모르는 키는 어느 깊이에서든 거부됩니다 (strict).
-- `publisher` 는 **쓰지 않습니다**. Orca가 설치 출처에서 정합니다: GitHub 소유자 → `maximinhan`,
-  개발 폴더 → `local`. 생략하려면 `engines.orca` 가 `>=1.4.246` 이상이어야 합니다.
-- `id` 는 kebab-case. `orca-` 접두사와 `stablyai`/`official`/`anthropic`/`openai`/`github`/`orca*` 소유자는 예약.
-- `engines.orca` 는 사용하는 필드/컴포넌트의 가장 높은 "Since" 로 맞춥니다. 이 저장소는 `>=1.4.247`
-  (`contributes.settings` 1.4.246, `Callout`/`Field`/`Table` 컴포넌트 1.4.247). 상태바 항목·훅·`frame: isolated` 를 쓰면 `>=1.4.248`.
-- `pluginApi: 1` 은 패널/워커가 호스트 API 를 쓸 때만 넣습니다 (`data`/`declarative` 에서는 거부).
-- `main` 은 `.js`/`.mjs` 또는 `.ts`/`.mts` (빌드 없이 Orca가 트랜스파일). **`.tsx` 워커는 불가**.
-- `license` 는 SPDX 식. 저장소에 같은 내용의 `LICENSE` 파일을 둡니다 (리뷰 항목).
-- 에디터 자동완성: `$schema` 에 공개 스키마 URL 을 넣습니다 (Orca는 무시).
-- 이미지 제한: `icon` PNG/WEBP 정사각 128px 이상 256 KB 이하, `cover` 800×500 이상(권장 1600×1000) 1024 KB 이하,
-  `screenshots` 최대 6장 1280×800 이상 1536 KB 이하, 전체 8 MB 이하. 실제 플러그인 화면만, 가짜 신뢰 배지 금지.
+- `"manifestVersion": 2` is required. Unknown keys at any depth are refused (strict).
+- **Leave `publisher` out.** Orca derives it from where the plugin is installed from: the GitHub
+  owner → `maximinhan`, a development folder → `local`. Leaving it out needs `engines.orca`
+  `>=1.4.246` or newer.
+- `id` is kebab-case. The `orca-` prefix and the owners `stablyai`, `official`, `anthropic`,
+  `openai`, `github` and `orca*` are reserved.
+- `engines.orca` must be the newest "Since" of every field you use. This repository needs
+  `>=1.4.248` (`contributes.hooks` 1.4.248; `contributes.settings` 1.4.246; the `Callout`,
+  `Table`, `Tree`, `Textarea`, `Checkbox`, `KeyValue`, `Collapsible` components 1.4.247).
+- `pluginApi: 1` only when a panel or worker calls the host API (refused on `data`/`declarative`).
+- `main` is a `.js`/`.mjs` or `.ts`/`.mts` module (transpiled by Orca, no build). **No `.tsx` worker.**
+- `license` is an SPDX expression; keep a matching `LICENSE` file (review item).
+- `contributes.hooks` entries name a hook (`agent.launch.before` here) and `onError`
+  (`pass` or `deny`). With a hook, Orca starts the worker when the plugin is enabled and keeps it
+  running, which is what keeps the agent gateway up.
+- Editor completion: put the published schema URL in `$schema` (ignored by Orca).
+- Images: `icon` PNG/WEBP square ≥128px ≤256 KB; `cover` ≥800×500 (1600×1000 recommended)
+  ≤1024 KB; up to six `screenshots` ≥1280×800 ≤1536 KB; 8 MB in all. Real plugin UI only, no
+  fake trust badges.
 
-## 3. 코드 구조
+## 3. Code structure
 
-### 워커 (`src/worker.ts`)
+### Worker (`src/worker.ts`)
 
-- **default export** 가 `activate(orca)` 여야 합니다 (named export 면 시작 실패). `export function deactivate()` 는 선택.
-- 받는 객체: `orca.api`, `orca.host.call/has`, `orca.commands.register`, `orca.events.on`, `orca.hooks.on`,
-  `orca.panels.handle/post`, `orca.storage.get/set/delete/keys/onDidChange`, `orca.settings.get/set/onDidChange`,
+- The **default export** must be `activate(orca)` (a named export fails the start);
+  `export function deactivate()` is optional.
+- The object it receives: `orca.api`, `orca.host.call/has`, `orca.commands.register`,
+  `orca.events.on`, `orca.hooks.on`, `orca.panels.handle/post`,
+  `orca.storage.get/set/delete/keys/onDidChange`, `orca.settings.get/set/onDidChange`,
   `orca.secrets.get/set/delete`, `orca.grantedCapabilities`, `orca.log`.
-- 워커는 유휴 시 중지되고 다음 요청/이벤트 때 다시 시작됩니다. 메모리 상태는 사라지므로 지속 데이터는 storage 에.
-  (`contributes.hooks` 나 `statusBarItems` 가 있으면 활성화 동안 계속 실행.)
-- 핸들러가 던지는 오류의 `code` 는 패널의 `plugin.request` 거부로 전달됩니다. 아는 코드(`invalid_params`,
-  `conflict`, `unavailable`, `timeout` ...)만 유지되고 나머지는 `action_failed`.
-- 요청 입력 64 KiB, 응답 1 MiB, `post` 256 KiB·10초당 200회 제한. 타임아웃 기본 30초, 최대 120초.
-- 상대 import 는 확장자 없이 가능(`./util` → `util.ts`). `node:` 빌트인과 패키지는 Node 규칙 그대로.
-  `orca/worker` 는 타입 전용이므로 `import type` 으로만.
+- Without hooks or status bar items a worker stops when idle and restarts on the next request or
+  event, losing in-memory state: keep what must last in storage.
+- An error a handler throws reaches the panel's `plugin.request` as a rejection with its `code`.
+  Known codes (`invalid_params`, `conflict`, `unavailable`, `timeout`, `not_permitted`, ...) are
+  kept; anything else becomes `action_failed`.
+- Request input ≤64 KiB, answer ≤1 MiB, `post` ≤256 KiB and 200 per 10 s. Request timeout 30 s by
+  default, 120 s at most.
+- Hooks: `orca.hooks.on(hook, (event, next) => ...)`; return `next(changedEvent)` to go on,
+  `{ deny: reason }` to stop, nothing to pass. A handler has 2 s. Decide before any awaited host
+  call (this plugin caches its settings for that reason).
+- Relative imports resolve with or without extension (`./util` → `util.ts`; `./util.ts` also
+  works). `node:` builtins and packages resolve as Node does. `orca/worker` is types only:
+  `import type`.
+- Workers are Node with full access: they may listen on sockets, read files and spawn processes.
+  That is why `trusted-worker` is approved per install.
 
-### 패널 (`src/panel.tsx`, `ui: "components"`)
+### Panel (`src/panel.tsx`, `ui: "components"`)
 
-- default export 가 컴포넌트 함수. 훅 없음, 상태는 `atom`/`derived`/`read`/`set`/`update`.
-- import 는 `orca`, `orca/*`, 상대 파일만. `react` 같은 bare 패키지는 로드 실패. npm 패키지가 필요하면
-  esbuild 로 번들해 `.js` 를 `entry` 로 지정 (`--external:orca --external:'orca/*' --jsx=automatic --jsx-import-source=orca`).
-- 컴포넌트는 `orca` 모듈에서 이름으로 import. 기본 카탈로그: `Stack Row Text Heading Button IconButton Badge Card
-  List ListItem Input Switch Select Separator Progress Spinner EmptyState Link Code`.
-  1.4.247 추가: `Textarea Checkbox RadioGroup Slider Field Tabs Tab Collapsible Toolbar Grid Table Tree Markdown
-  CodeView Image KeyValue Callout Skeleton RelativeTime`. 1.4.248 추가: `Box`.
-  최소 지원 버전보다 새 컴포넌트는 `ui.has('Table')` 로 확인 후 `h('Table', …)` 로 생성.
-- 렌더 제한: 5000 노드, 깊이 64, 약 512 KiB, 텍스트 16 KiB, Select 옵션 500, Table 행 5000.
-- `shell.openExternal`/`files.saveAs` 는 Button/IconButton/ListItem/Link 의 실제 클릭 직후 1초 안에서만.
-- 패널 ↔ 워커: 패널 `plugin.request(name, input, { timeoutMs })` ↔ 워커 `orca.panels.handle(name, fn)`,
-  워커 `orca.panels.post(event, payload)` ↔ 패널 `plugin.on(event, fn)`. 계약은 `src/protocol.ts` 의
-  `declare module 'orca' { interface PluginRequests / PluginPanelEvents }` 하나로 양쪽 타입 검사.
-- 데이터 공유: `atom(key, init, { persist: 'storage' })` 는 워커의 `orca.storage.get(key)` 와 같은 값.
-  `persist: 'plugin'`/`'workspace'` 는 패널 전용 지속 상태(capability 불필요).
+- The default export is a component function. No hooks; state in `atom`/`derived`/`read`/
+  `set`/`update`.
+- Imports are limited to `orca`, `orca/*` and relative files. A bare package such as `react`
+  fails to load; bundle with esbuild and point `entry` at the `.js` if you need npm packages
+  (`--external:orca --external:'orca/*' --jsx=automatic --jsx-import-source=orca`).
+- Components are named imports from `orca`. Base catalog: `Stack Row Text Heading Button
+  IconButton Badge Card List ListItem Input Switch Select Separator Progress Spinner EmptyState
+  Link Code`. Added in 1.4.247: `Textarea Checkbox RadioGroup Slider Field Tabs Tab Collapsible
+  Toolbar Grid Table Tree Markdown CodeView Image KeyValue Callout Skeleton RelativeTime`. Added
+  in 1.4.248: `Box`. For a component newer than your minimum, check `ui.has('Table')` and create
+  it with `h('Table', …)`.
+- Render limits: 5000 nodes, depth 64, about 512 KiB, 16 KiB per text, 500 `Select` options,
+  5000 `Table` rows.
+- `shell.openExternal`/`files.saveAs` need a real press on a Button, IconButton, ListItem or Link
+  within 1 s.
+- Panel ↔ worker: panel `plugin.request(name, input, { timeoutMs })` ↔ worker
+  `orca.panels.handle(name, fn)`; worker `orca.panels.post(event, payload)` ↔ panel
+  `plugin.on(event, fn)`. Declare the contract once in `src/protocol.ts` with
+  `declare module 'orca' { interface PluginRequests / PluginPanelEvents }`.
+- Shared data: `atom(key, init, { persist: 'storage' })` is the same value the worker reads with
+  `orca.storage.get(key)`. `persist: 'plugin'`/`'workspace'` is panel-only persisted state (no
+  capability needed).
 
-## 4. 의존성과 크기 제한 (DB 드라이버를 넣을 때 중요)
+## 4. Dependencies and size limits (what the bundled drivers follow)
 
-- 설치 시 Orca는 루트 `.git/` 을 제외한 **모든 파일을 복사하고 해시**합니다. 개발 폴더에서는 `node_modules/`,
-  `.orca/`, `.git/` 이 무시되지만, 설치본에는 `node_modules` 가 없으므로 **npm 패키지는 번들해서 커밋**해야 합니다.
-- 제한: 폴더당 2,000 파일·50 MiB, 패널/에디터 entry 10 MiB, 트랜스파일 대상 `.ts/.tsx` 파일당 1 MiB,
-  **카탈로그 등재 시 파일당 1 MiB**.
-- 정책: 난독화/검토 불가 minify 금지, 번들 산출물은 소스가 같은 저장소에 있을 때만 허용. 공식 카탈로그 리뷰는
-  "컴파일된 실행 파일, 네이티브 모듈 금지". 추적/분석/데이터 수집 금지. 유료 기능 금지(사용자 본인의 유료 서비스 접속은 가능).
-- 선례 `plugins/sqlite-browser`: `build/`(package.json + esbuild + 테스트) → 생성물 `editor/` 를 커밋,
-  `.gitattributes` 로 `linguist-generated`, `THIRD_PARTY_NOTICES.txt` 에 번들 라이선스 기록, 빌드 스크립트가
-  1 MiB 초과와 `eval`/`Function` 사용을 실패 처리.
+- An install copies and **hashes every file** except the root `.git/`. Development folders skip
+  `node_modules/`, `.orca/` and `.git/`, but an installed plugin has no `node_modules`, so **npm
+  packages must be bundled and committed**. This repository does that in `build/` → `vendor/`
+  (`pg.cjs`, `mysql2.cjs`), loaded with `createRequire`.
+- Limits: 2,000 files and 50 MiB per folder; panel/editor entry 10 MiB; each transpiled
+  `.ts/.tsx` file 1 MiB; **1 MiB per file for a catalog listing**.
+- Policy: no obfuscated or minified-to-hide code; bundled output is fine when its source is in the
+  repository. The official catalog review refuses compiled executables and native modules. No
+  tracking or data collection. No paid features (connecting to the user's own paid service is fine).
+- Precedent `plugins/sqlite-browser`: `build/` (package.json, esbuild, tests) produces a committed
+  output folder, `.gitattributes` marks it `linguist-generated`, `THIRD_PARTY_NOTICES.txt` lists
+  bundled licences, and the build fails on files over 1 MiB or on `eval`/`Function`.
 
-DB 드라이버 선택지:
+Driver choices made here:
 
-| 방식 | 장점 | 확인 필요 |
+| Driver | How | Notes |
 | --- | --- | --- |
-| Node 빌트인 `node:sqlite` | 의존성 0, 빌드 0 | 워커가 쓰는 Electron 43 내장 Node 의 버전에서 `node:sqlite` 가 플래그 없이 되는지 실기기에서 확인 |
-| 순수 JS 드라이버(`pg`, `mysql2`)를 esbuild 로 `platform=node` 번들 → 커밋 | 네이티브 모듈 없음, 리뷰 통과 가능 | 산출물 1 MiB 이하 유지, 라이선스 고지 파일 추가 |
-| 네이티브 모듈(`better-sqlite3`, `pg-native`) | - | 사용 불가 (바이너리 금지, 설치 해시 불일치) |
+| SQLite | Node built-in `node:sqlite` | No dependency, no build. Needs the worker's Node ≥22.13 (unflagged `node:sqlite`); Orca ships Electron 43 |
+| PostgreSQL | `pg` bundled by esbuild (`platform=node`, CommonJS, not minified) | 170 KB; `pg-native` stays external |
+| MySQL/MariaDB | `mysql2/promise` bundled with shims for `iconv-lite` and `aws-ssl-profiles` | 576 KB; utf8/latin1/ascii/ucs2 charsets only |
+| Native modules (`better-sqlite3`, `pg-native`) | not possible | Binaries are refused and would not match the install hash |
 
-## 5. 개발 루프
+## 5. Development loop
 
-1. **Orca 데스크톱 설치**: `brew install --cask stablyai/orca/orca` (bare `orca` 는 다른 Plotly cask) 또는
-   https://onorca.dev/download. `orca` CLI 가 함께 들어옵니다. 패널/워커 로드, 스크린샷, 승인은 데스크톱 앱이
-   필요하며 `orca serve`(브라우저) 로는 components 패널이 보이지 않습니다.
-2. **(새로 만들 때)** `orca plugin create <dir> --template worker-panel` 로 스캐폴드. 템플릿:
-   `theme | terminal-theme | icon-theme | syntax | language-pack | editor | panel | components | worker-panel`.
-   이 저장소는 이미 같은 구조로 만들어져 있으므로 생략.
-3. **로드**: 플러그인 폴더에서 `orca plugin dev watch .`
-   - `.orca/types` 타이핑을 쓰고 폴더를 개발 플러그인(`local.db-connector`)으로 로드, 로그와 `↻ reloaded` 를 출력.
-   - 첫 로드는 승인이 필요: 터미널에서는 `Approve and load? [y/N]`, 비대화형(에이전트/파이프/`--json`)에서는
-     exit 3 과 함께 `orca plugin dev reload . --approve <fingerprint>` 명령을 출력. 스스로 승인하지 않음.
-   - capability 추가·프로필 상향·명령/단축키 변경은 재승인. 패널/워커 코드 변경은 재승인 없이 핫리로드
-     (워커는 재시작되어 메모리 상태 소실).
-   - GUI 대안: Settings → Plugins → **Turn on plugins** → **Development folders…** 에 폴더 추가 → 검토·활성화.
-4. **타입 검사**: `orca plugin types .` (dev watch 가 자동 실행) 후 `npx tsc -p .`.
-   `tsconfig.json` 은 `./.orca/types/tsconfig.json` 을 extends 하며 `.orca/` 는 커밋하지 않습니다.
-5. **테스트**: `orca plugin test .` 가 `src/*.test.ts(x)` 를 Node `node:test` 로 실행. `orca/testing` 의
-   `mount`(패널), `mountWorker`(워커), `mockHost({ storage, settings, secrets, requests, results })`,
-   `mockEditorHost`(에디터) 사용. 테스트와 check 는 샌드박스 밖(내 머신 전체 권한)에서 코드를 실행하므로 신뢰하는
-   코드에만 사용.
-6. **렌더 점검**: `orca plugin check .` 가 `src/panel.check.ts` 시나리오마다 패널을 그려 `file:line` 오류,
-   거부될 레이아웃, 버려질 prop, 거부될 호스트 호출을 보고. `--json` 으로 전체 트리.
-7. **스크린샷**: `orca plugin shot <plugin-key>` → `.orca/shots/<key>-<panel>.png`. `--theme light|dark`,
-   `--width`, `--act '<json>'`(버튼 누르기/입력 등) 지원. 창이 숨겨져 있어도 캡처.
-8. **워커 직접 호출**: `orca plugin dev request . connections.list --data '{}'`,
-   이벤트 주입 `orca plugin dev emit . workspace.created --data '{...}'`.
-9. **로그/디버깅**: `orca plugin logs <publisher.id>`, `orca plugin dev inspect <publisher.id>`(프레임 DevTools),
-   `orca plugin dev reload .`, `orca plugin dev unload .`.
+1. **Install the Orca desktop app**: `brew install --cask stablyai/orca/orca` (bare `orca` is an
+   unrelated Plotly cask) or https://onorca.dev/download. The `orca` CLI comes with it. Loading
+   panels and workers, screenshots and approvals need the desktop app; `orca serve` in a browser
+   shows no components panels.
+2. **(New plugin)** `orca plugin create <dir> --template worker-panel`. Templates: `theme |
+   terminal-theme | icon-theme | syntax | language-pack | editor | panel | components |
+   worker-panel`. This repository already has that layout.
+3. **Load**: from the plugin folder, `orca plugin dev watch .`
+   - Writes `.orca/types`, loads the folder as the development plugin `local.db-connector`,
+     prints logs and `↻ reloaded`.
+   - The first load needs approval: in a terminal `Approve and load? [y/N]`; non-interactive
+     (agent, pipe, `--json`) exits 3 and prints `orca plugin dev reload . --approve
+     <fingerprint>`. It never approves by itself.
+   - Adding a capability, raising the profile or changing commands/shortcuts needs a new
+     approval. Panel and worker code changes hot-reload without one (the worker restarts and
+     loses memory state; this plugin's gateway token changes with it).
+   - GUI alternative: Settings → Plugins → **Turn on plugins** → **Development folders…** → add the
+     folder → review and enable.
+4. **Type check**: `orca plugin types .` (dev watch does it) then `npx tsc -p .`. `tsconfig.json`
+   extends `./.orca/types/tsconfig.json`; `.orca/` is never committed. This repository adds
+   `allowImportingTsExtensions` because worker-side files import with `.ts` so plain Node can run
+   their tests.
+5. **Tests**: `orca plugin test .` runs `src/*.test.ts(x)` with Node's `node:test`, resolving
+   `orca/testing` (`mount` for panels, `mountWorker` for workers, `mockHost({ storage, settings,
+   secrets, requests, results })`, `mockEditorHost`). Tests and check run outside the sandbox with
+   your full access: only on code you trust. `npm run test:node` runs the subset that needs no
+   Orca at all.
+6. **Render check**: `orca plugin check .` renders each `src/panel.check.ts` scenario and reports
+   `file:line` errors, refused layouts, dropped props and refused host calls; `--json` adds the tree.
+7. **Screenshots**: `orca plugin shot <plugin-key>` → `.orca/shots/<key>-<panel>.png`, with
+   `--theme light|dark`, `--width`, `--act '<json>'` (presses, typing). Captures the hidden window.
+8. **Call the worker directly**: `orca plugin dev request . connections.list --data '{}'`; inject
+   an event with `orca plugin dev emit . workspace.created --data '{...}'`.
+9. **Logs and debugging**: `orca plugin logs <publisher.id>`, `orca plugin dev inspect
+   <publisher.id>` (frame DevTools), `orca plugin dev reload .`, `orca plugin dev unload .`.
 
-## 6. 검증
+## 6. Validation
 
 ```sh
-orca plugin validate .                 # Orca 설치본
-pnpm validate:plugin path/to/plugin    # stablyai/orca 체크아웃에서 (Electron 불필요: pnpm install --ignore-scripts && pnpm run build:packages)
-orca plugin inspect .                  # 허용되는 동작과 contentHash
-orca plugin release-entry .            # 카탈로그 release 항목 출력 (HEAD 기준)
+orca plugin validate .                 # with Orca installed
+pnpm validate:plugin path/to/plugin    # from a stablyai/orca checkout (no Electron: pnpm install --ignore-scripts && pnpm run build:packages)
+orca plugin inspect .                  # what it would be allowed to do, and its contentHash
+orca plugin release-entry .            # the catalog release entry for HEAD
 ```
 
-검사 내용: 모르는 키, 제한 초과, 프로필 밖 기여, 사용 필드보다 낮은 `engines.orca`, 매니페스트가 가리키는
-모든 파일의 존재와 크기. `publisher` 가 남아 있으면 경고.
-종료 코드: `orca plugin` 은 0 정상 / 1 오류 / 2 매니페스트 무효 / 3 승인 필요. `pnpm validate:plugin` 은 0 / 1 무효 / 2 경로 없음.
+Checked: unknown keys, limits, contributions beyond the profile, an `engines.orca` lower than the
+fields used, and the existence and size of every file the manifest names. A remaining
+`publisher` is a warning. Exit codes: `orca plugin` 0 ok / 1 error / 2 invalid manifest / 3
+approval needed; `pnpm validate:plugin` 0 / 1 invalid / 2 no path.
 
-이 저장소의 `npm run check:manifest`(ajv) 는 Orca 없이 공식 JSON Schema 와 파일 존재만 확인하는 사전 점검이며
-Orca 검증기를 대체하지 않습니다. CI(`.github/workflows/validate.yml`)는 둘 다 실행합니다.
+`npm run check:manifest` (ajv) in this repository checks only the published JSON Schema and file
+existence without Orca; it does not replace Orca's validator. CI
+(`.github/workflows/validate.yml`) runs both, plus `npm run test:node`.
 
-## 7. 배포
+## 7. Publishing
 
-### 7-1. 커뮤니티 디렉터리 (onorca.dev/plugins) — 기본 경로
+### 7-1. Community directory (onorca.dev/plugins), the default route
 
-1. `orca plugin validate .` 통과, 저장소 소유자(`maximinhan`)의 공개 GitHub 저장소에 커밋·푸시.
-2. `orca-plugin.json` 의 `version` 을 올려 커밋한 뒤 그 커밋에 태그: `git tag -a v0.1.0 -m v0.1.0 && git push origin v0.1.0`
-   (`vX.Y.Z` 형식).
-3. 저장소에 `orca-plugin` 토픽 추가: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`.
-4. https://www.onorca.dev/plugins/maximinhan/orca-db-connector 에서 등재 상태 확인.
+1. `orca plugin validate .` passes; the plugin is committed and pushed to the public GitHub
+   repository of the owner (`maximinhan`).
+2. Bump `version` in `orca-plugin.json`, commit, then tag that commit: `git tag -a v0.2.0 -m
+   v0.2.0 && git push origin v0.2.0` (`vX.Y.Z`).
+3. Add the `orca-plugin` topic: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`.
+4. Check the listing at https://www.onorca.dev/plugins/maximinhan/orca-db-connector.
 
-등재 정책: 무료, 소유자=publisher, 사칭 금지, 안전한 코드(난독화·추적 금지), 선정적 내용 금지. 위반 시 목록 제거,
-악성이면 kill list(`https://onorca.dev/plugins/kill-list.json`)로 설치본도 비활성화.
+Listing policy: free, publisher = owner, no impersonation, safe code (no obfuscation or tracking),
+no explicit content. Violations are delisted; malicious plugins go on the kill list
+(`https://onorca.dev/plugins/kill-list.json`), which also disables installed copies.
 
-### 7-2. 카탈로그 (선택)
+### 7-2. A catalog (optional)
 
-`orca-catalog.json` 을 루트에 둔 Git 저장소. 각 release 는 40자 커밋 SHA 와 `contentHash` 로 고정되며 Orca는
-해시가 다른 바이트를 설치하지 않습니다. `orca plugin release-entry .` 출력을 그대로 붙여 넣고(손으로 쓰지 말 것),
-새 release 를 `releases` 맨 앞에, `engines.orca` 를 올리면 이전 release 도 남겨 둡니다. 사용자는
-Settings → Plugins → ⋯ → **Catalog sources…** 에 Git URL 과 ref 를 추가합니다. 공식 카탈로그(stablyai/orca-plugins)에는
-Stably 가 관리하는 플러그인만 들어가며 커뮤니티 플러그인 PR 은 닫힙니다.
+A Git repository with `orca-catalog.json` at its root. Each release is pinned to a 40-character
+commit SHA and a `contentHash`; Orca refuses bytes that differ. Paste the output of `orca plugin
+release-entry .` (never write it by hand), newest release first, and keep the previous release
+when you raise `engines.orca`. Users add the catalog under Settings → Plugins → ⋯ → **Catalog
+sources…** with its Git URL and ref. The official catalog (stablyai/orca-plugins) holds only
+plugins Stably maintains; community pull requests are closed.
 
-### 7-3. 업데이트와 재승인
+### 7-3. Updates and re-approval
 
-같은 저장소에서 오는 업데이트가 새 권한을 요구하지 않으면(코드 변경 포함) 재승인 없이 설치되고,
-capability 추가·프로필 상향·명령/단축키/패널/이벤트 추가·VM 레시피·저장소 변경이 있으면 Orca가 다시 묻습니다.
-자동 업데이트(기본 켜짐)는 등재 12시간 후(공식 카탈로그는 즉시) 설치되며, 고정된 카탈로그 release 만 자동 설치됩니다.
+An update from the same repository that asks for nothing new (code changes included) installs
+without asking again. Orca asks again when an update adds a capability, raises the profile, adds a
+command, shortcut, panel or event subscription, ships VM recipes, or comes from another
+repository. Automatic updates (on by default) install a release 12 hours after it is listed
+(official catalog: at once); only pinned catalog releases install by themselves.
 
-## 8. 이 저장소에서 확인하지 못한 것
+## 8. Not verified in this repository's sessions
 
-- 이 세션에는 Orca 데스크톱이 없고 외부 저장소의 의존성 설치가 허용되지 않아 `orca plugin validate/test/check` 와
-  `pnpm validate:plugin` 을 직접 실행하지 못했습니다. 매니페스트는 공식 JSON Schema(ajv)로, 소스는 esbuild 구문
-  검사로만 확인했습니다. 테스트 파일은 공식 템플릿과 예제의 `orca/testing` API 를 따라 작성했으나 실행 전입니다.
-- onorca.dev 는 이 세션의 네트워크 정책에서 차단되어 사이트 문서는 읽지 못했고, 같은 내용을 담은
-  `stablyai/orca` 저장소의 `docs/reference/*.md` 를 사용했습니다.
-- 워커 Node 버전과 `node:sqlite` 가용성은 실제 Orca 설치본에서 확인이 필요합니다.
+- The Orca desktop app is not available in the cloud session this was written in, and installing
+  the Orca checkout's dependencies was not allowed there, so `orca plugin validate/test/check`
+  and `pnpm validate:plugin` have not been run yet. The manifest was checked against the official
+  JSON Schema with ajv, every source with an esbuild syntax pass, and the drivers, gateway, hook,
+  MCP server and worker wiring with `npm run test:node` in plain Node 22. The `orca/testing`
+  tests (`src/panel.test.tsx`, `src/worker.test.ts`) follow the official template and examples
+  but have not been executed.
+- onorca.dev was blocked by that session's network policy; the same content was read from
+  `docs/reference/*.md` in the `stablyai/orca` repository.
+- The exact Node version of Orca's worker, and so `node:sqlite` availability, still needs a check
+  on a real Orca install (`orca plugin logs` prints the error if it is missing).
+- PostgreSQL and MySQL were tested only against a closed port (the bundles load and fail cleanly),
+  not against live servers.
