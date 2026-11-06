@@ -9,7 +9,20 @@ export const DB_DRIVER_KINDS: readonly DbDriverKind[] = ['postgres', 'mysql', 's
 /** What an agent's write statement does on this connection: run at once, or wait for the person. */
 export type AgentWritePolicy = 'ask' | 'always'
 
-/** A saved connection. The password is never part of it: it lives in the plugin's secrets. */
+/** Where the password (and, for an RDS-style secret, missing host/port/user/database) comes from. */
+export type DbCredentials =
+  | { source: 'password' }
+  | {
+      source: 'aws-secrets-manager'
+      /** Secret name or ARN. */
+      secretId: string
+      /** Empty: AWS_REGION, AWS_DEFAULT_REGION or the profile's region. */
+      region: string
+      /** Empty: AWS_PROFILE or `default`. */
+      profile: string
+    }
+
+/** A saved connection. The password is never part of it: it lives in the plugin's secrets or in AWS. */
 export type DbConnection = {
   id: string
   name: string
@@ -27,6 +40,7 @@ export type DbConnection = {
   agentWrites: AgentWritePolicy
   /** A dangerous environment: every write is confirmed by the person, and its queries are highlighted. */
   dangerous: boolean
+  credentials: DbCredentials
 }
 
 export type DbCell = string | number | boolean | null

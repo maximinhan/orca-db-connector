@@ -68,7 +68,7 @@ const memory = {
   environment: 'local',
   agent: true,
   agentWrites: 'ask',
-  dangerous: false
+  dangerous: false, credentials: { source: 'password' }
 }
 
 test('activate wires panel requests, the gateway and the launch hook', async () => {
@@ -141,7 +141,7 @@ test('an agent write waits for the panel, notifies, and the decision reaches the
   const { orca, request, hooks, posts, hostCalls } = fakeOrca({ agentAccess: 'read-write', approvalTimeoutMs: 10_000 })
   await activate(orca)
   try {
-    await request('connections.save', { connection: { ...memory, dangerous: true, environment: 'prod' } })
+    await request('connections.save', { connection: { ...memory, dangerous: true, credentials: { source: 'password' }, environment: 'prod' } })
     const hook = hooks.get('agent.launch.before')!
     const launch = hook({ agent: 'claude', command: 'claude', env: {} }, (event?: unknown) => ({ continued: event })) as { continued: { env: Record<string, string> } }
     const { ORCA_DB_GATEWAY_URL: url, ORCA_DB_GATEWAY_TOKEN: token } = launch.continued.env

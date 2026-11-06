@@ -31,7 +31,7 @@ const local: DbConnection = {
   environment: 'local',
   agent: true,
   agentWrites: 'ask',
-  dangerous: false
+  dangerous: false, credentials: { source: 'password' }
 }
 
 test('starts empty and saves a connection through the worker', async () => {
@@ -113,7 +113,7 @@ test('runs a query on the selected connection and shows the rows', async () => {
 
 test('a write on a dangerous connection asks for a second press', async () => {
   const runs: { allowWrites?: boolean; confirmed?: boolean }[] = []
-  const prod: DbConnection = { ...local, id: 'prod', name: 'Prod', environment: 'prod', dangerous: true }
+  const prod: DbConnection = { ...local, id: 'prod', name: 'Prod', environment: 'prod', dangerous: true, credentials: { source: 'password' } }
   const host = mockHost({
     requests: {
       ...quiet,

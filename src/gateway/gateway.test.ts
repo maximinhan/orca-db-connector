@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, before, test } from 'node:test'
 import { ApprovalQueue } from '../approvals/queue.ts'
+import { SecretsManager } from '../aws/secrets-manager.ts'
 import { DbService, DEFAULT_SETTINGS } from '../db/service.ts'
 import { sqliteDriver } from '../drivers/sqlite.ts'
 import { QueryLog } from '../log/query-log.ts'
@@ -23,14 +24,14 @@ const sqlite = (id: string, extra: Partial<DbConnection>): DbConnection => ({
   environment: 'test',
   agent: true,
   agentWrites: 'ask',
-  dangerous: false,
+  dangerous: false, credentials: { source: 'password' },
   ...extra
 })
 const connections: DbConnection[] = [
   sqlite('local', {}),
   sqlite('hidden', { agent: false }),
   sqlite('auto', { agentWrites: 'always' }),
-  sqlite('prod', { agentWrites: 'always', dangerous: true, environment: 'prod' })
+  sqlite('prod', { agentWrites: 'always', dangerous: true, credentials: { source: 'password' }, environment: 'prod' })
 ]
 let access: AgentAccess = 'read-only'
 let gateway: Gateway
@@ -42,7 +43,8 @@ const service = new DbService({
   password: async () => null,
   settings: async () => ({ ...DEFAULT_SETTINGS, maxRows: 3, agentAccess: access }),
   approvals,
-  log
+  log,
+  secrets: new SecretsManager({ cli: null })
 })
 
 before(async () => {
@@ -86,7 +88,7 @@ test('health, connections and schema', async () => {
   assert.equal(list.status, 200)
   const listed = list.body.connections as { id: string; environment: string; dangerous: boolean; agentWrites: string }[]
   assert.deepEqual(listed.map((connection) => connection.id), ['local', 'auto', 'prod'])
-  assert.deepEqual(listed[2], { id: 'prod', name: 'prod', driver: 'sqlite', host: '', port: 0, database: file, user: '', environment: 'prod', dangerous: true, agentWrites: 'always' })
+  assert.deepEqual(listed[2], { id: 'prod', name: 'prod', driver: 'sqlite', host: '', port: 0, database: file, user: '', environment: 'prod', dangerous: true, agentWrites: 'always', credentialSource: 'password' })
 
   const schema = await call('GET', '/connections/local/schema')
   assert.equal(schema.status, 200)

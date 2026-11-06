@@ -14,7 +14,8 @@ const connections = [
     environment: 'local',
     agent: true,
     agentWrites: 'always',
-    dangerous: false
+    dangerous: false,
+    credentials: { source: 'password' }
   },
   {
     id: 'prod',
@@ -27,7 +28,8 @@ const connections = [
     environment: 'prod',
     agent: true,
     agentWrites: 'ask',
-    dangerous: true
+    dangerous: true,
+    credentials: { source: 'password' }
   },
   {
     id: 'reports',
@@ -40,7 +42,8 @@ const connections = [
     environment: '',
     agent: false,
     agentWrites: 'ask',
-    dangerous: false
+    dangerous: false,
+    credentials: { source: 'password' }
   }
 ]
 

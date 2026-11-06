@@ -45,8 +45,8 @@ function errorResponse(error: unknown): GatewayResponse {
 }
 
 function publicConnection(connection: DbConnection) {
-  const { id, name, driver, host, port, database, user, environment, dangerous, agentWrites } = connection
-  return { id, name, driver, host, port, database, user, environment, dangerous, agentWrites }
+  const { id, name, driver, host, port, database, user, environment, dangerous, agentWrites, credentials } = connection
+  return { id, name, driver, host, port, database, user, environment, dangerous, agentWrites, credentialSource: credentials.source }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

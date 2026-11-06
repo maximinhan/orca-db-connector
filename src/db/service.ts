@@ -2,6 +2,7 @@
 // run SQL. Sessions are opened per call and closed again. Reads run in a read-only session, so the
 // engine enforces it; writes run inside a transaction after the policy below allowed them, and
 // every query lands in the log with its outcome.
+import type { SecretsManager } from '../aws/secrets-manager.ts'
 import { describeConnection, writeNeedsApproval } from '../connections.ts'
 import { loadDriver } from '../drivers/index.ts'
 import { errorMessage, hostError, type HostError } from '../errors.ts'
@@ -31,6 +32,7 @@ export type DbServiceDeps = {
   settings(): Promise<DbServiceSettings>
   approvals: ApprovalQueue
   log: QueryLog
+  secrets: SecretsManager
   trace?(message: string): void
 }
 
@@ -72,15 +74,39 @@ export class DbService {
     return connection
   }
 
+  /** The password and, for an AWS secret, the fields it fills in where the connection left them blank. */
+  private async resolve(connection: DbConnection, fresh: boolean): Promise<{ target: DbConnection; password: string | null }> {
+    if (connection.credentials.source !== 'aws-secrets-manager') {
+      return { target: connection, password: await this.deps.password(connection.id) }
+    }
+    const { secretId, region, profile } = connection.credentials
+    const secret = await this.deps.secrets.get({ secretId, region, profile }, { fresh })
+    const target: DbConnection = {
+      ...connection,
+      host: connection.host || secret.host || connection.host,
+      port: connection.port || secret.port || connection.port,
+      user: connection.user || secret.username || connection.user,
+      database: connection.database || secret.database || connection.database
+    }
+    return { target, password: secret.password }
+  }
+
   private async open(connection: DbConnection, readOnly: boolean) {
     const settings = await this.deps.settings()
     const driver = await loadDriver(connection.driver)
-    const client = await driver.connect(connection, await this.deps.password(connection.id), {
-      readOnly,
-      connectTimeoutMs: settings.connectTimeoutMs,
-      queryTimeoutMs: settings.queryTimeoutMs
-    })
-    return { client, settings }
+    const options = { readOnly, connectTimeoutMs: settings.connectTimeoutMs, queryTimeoutMs: settings.queryTimeoutMs }
+    const first = await this.resolve(connection, false)
+    try {
+      return { client: await driver.connect(first.target, first.password, options), settings }
+    } catch (error) {
+      // A rotated secret: fetch it again once and retry before giving up.
+      if (connection.credentials.source !== 'aws-secrets-manager') {
+        throw error
+      }
+      this.deps.trace?.(`connect with the cached AWS secret failed (${errorMessage(error)}); fetching it again`)
+      const second = await this.resolve(connection, true)
+      return { client: await driver.connect(second.target, second.password, options), settings }
+    }
   }
 
   async test(id: string): Promise<ConnectionTestResult> {

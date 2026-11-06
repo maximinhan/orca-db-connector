@@ -14,7 +14,7 @@ const local: DbConnection = {
   environment: 'local',
   agent: true,
   agentWrites: 'ask',
-  dangerous: false
+  dangerous: false, credentials: { source: 'password' }
 }
 
 const memory: DbConnection = {
@@ -28,7 +28,7 @@ const memory: DbConnection = {
   environment: '',
   agent: true,
   agentWrites: 'ask',
-  dangerous: false
+  dangerous: false, credentials: { source: 'password' }
 }
 
 test('saves a connection in storage and its password in secrets', async () => {

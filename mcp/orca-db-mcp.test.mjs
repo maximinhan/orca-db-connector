@@ -8,6 +8,7 @@ import { createInterface } from 'node:readline'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { ApprovalQueue } from '../src/approvals/queue.ts'
+import { SecretsManager } from '../src/aws/secrets-manager.ts'
 import { DbService, DEFAULT_SETTINGS } from '../src/db/service.ts'
 import { sqliteDriver } from '../src/drivers/sqlite.ts'
 import { QueryLog } from '../src/log/query-log.ts'
@@ -16,7 +17,7 @@ import { handleMessage, TOOLS } from './orca-db-mcp.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const dir = mkdtempSync(path.join(tmpdir(), 'orca-db-mcp-'))
-const connection = { id: 'local', name: 'Local', driver: 'sqlite', host: '', port: 0, database: path.join(dir, 'a.db'), user: '', environment: 'test', agent: true, agentWrites: 'ask', dangerous: false }
+const connection = { id: 'local', name: 'Local', driver: 'sqlite', host: '', port: 0, database: path.join(dir, 'a.db'), user: '', environment: 'test', agent: true, agentWrites: 'ask', dangerous: false, credentials: { source: 'password' } }
 let gateway
 
 before(async () => {
@@ -30,7 +31,8 @@ before(async () => {
       password: async () => null,
       settings: async () => DEFAULT_SETTINGS,
       approvals: new ApprovalQueue({ timeoutMs: 1000 }),
-      log: new QueryLog()
+      log: new QueryLog(),
+      secrets: new SecretsManager({ cli: null })
     }),
     listConnections: async () => [connection],
     agentAccess: async () => 'read-only',

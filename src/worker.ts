@@ -8,6 +8,7 @@ import path from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { claudeMcpConfig, decorateAgentLaunch, type AgentLaunchEvent } from './agent/launch-hook.ts'
 import { ApprovalQueue } from './approvals/queue.ts'
+import { SecretsManager } from './aws/secrets-manager.ts'
 import { ConnectionStore, validateConnection } from './connections.ts'
 import { DbService, DEFAULT_SETTINGS, type DbServiceSettings } from './db/service.ts'
 import { errorMessage } from './errors.ts'
@@ -15,7 +16,7 @@ import { startGateway, type Gateway } from './gateway/server.ts'
 import { QueryLog } from './log/query-log.ts'
 import type { AgentAccess, GatewayStatus } from './protocol.ts'
 
-const VERSION = '0.3.0'
+const VERSION = '0.4.0'
 const AGENT_ACCESS_VALUES: readonly AgentAccess[] = ['off', 'read-only', 'read-write']
 const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 
@@ -93,12 +94,14 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   await queryLog.load()
   log = queryLog
 
+  const secrets = new SecretsManager()
   const service = new DbService({
     getConnection: (id) => store.get(id),
     password: (id) => store.password(id),
     settings: async () => settings,
     approvals: queue,
     log: queryLog,
+    secrets,
     trace: (message) => orca.log(message)
   })
 
@@ -110,6 +113,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   orca.panels.handle('connections.list', async () => ({ connections: await store.list() }))
   orca.panels.handle('connections.save', async ({ connection, password }) => {
     const saved = await store.save(validateConnection(connection), password)
+    secrets.forget()
     await announce()
     return { connection: saved }
   })

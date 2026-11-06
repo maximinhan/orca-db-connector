@@ -20,7 +20,7 @@ const connection: DbConnection = {
   environment: '',
   agent: true,
   agentWrites: 'ask',
-  dangerous: false
+  dangerous: false, credentials: { source: 'password' }
 }
 const options = { connectTimeoutMs: 1000, queryTimeoutMs: 1000 }
 

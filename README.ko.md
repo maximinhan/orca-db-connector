@@ -24,6 +24,10 @@
   [docs/agent-access.ko.md](docs/agent-access.ko.md) 참고.
 - **드라이버**: SQLite 는 Node 내장 `node:sqlite`, PostgreSQL(`pg`)과 MySQL(`mysql2`)은
   `build/build.mjs` 가 `vendor/` 에 번들합니다 (설치된 플러그인은 `node_modules` 를 가질 수 없음).
+- **자격 증명**: Orca 암호화 secrets 에 보관한 비밀번호, 또는 **AWS Secrets Manager** 시크릿(RDS 형식:
+  `password` 를 쓰고, 비워 둔 필드는 `host`/`port`/`username`/`dbname` 으로 채움). AWS 자격 증명은 환경
+  변수, `~/.aws/credentials`, `credential_process` 에서 읽어 SigV4 로 직접 서명하고(SDK 번들 없음), 없으면
+  설치된 AWS CLI(SSO, 역할)로 폴백합니다. 시크릿은 워커에 5분 캐시되며 표시·기록되지 않습니다.
 
 ## 구조
 
@@ -35,6 +39,7 @@
 | `src/protocol.ts` | 패널 ↔ 워커 계약, 양쪽에서 타입 검사 |
 | `src/connections.ts` | 연결 저장소: 목록은 `storage:own`, 비밀번호는 `secrets:own` |
 | `src/db/service.ts` | 연결 테스트·스키마·쿼리. 쓰기 정책, 승인, 로깅 |
+| `src/aws/` | SigV4 서명, AWS 자격 증명 체인, Secrets Manager 클라이언트(CLI 폴백) |
 | `src/approvals/queue.ts` | 사용자의 결정을 기다리는 에이전트 쓰기 |
 | `src/log/query-log.ts` | 활동 로그와 최근 쿼리의 결과 행 |
 | `src/sql/classify.ts` | 읽기 전용 세션을 열기 전 SQL 의 읽기/쓰기 분류 |
@@ -55,8 +60,9 @@
 | Query timeout (ms) | 30000 | 서버 측 문장 타임아웃(PostgreSQL, MySQL) |
 | Max rows per query | 500 | 이 수를 넘는 행은 버리고 결과에 truncated 표시 |
 
-연결마다 **Environment label**(`local`, `dev`, `prod` …), **Expose to agents**, **Always allow agent
-writes**(꺼짐: 에이전트 쓰기마다 묻기), **Dangerous environment**(쓰기는 무조건 묻고 쿼리를 강조)가 있습니다.
+연결마다 **Environment label**(`local`, `dev`, `prod` …), **Credentials** 출처(비밀번호 또는 AWS Secrets
+Manager: 시크릿 이름/ARN, 리전, 프로필), **Expose to agents**, **Always allow agent writes**(꺼짐: 에이전트
+쓰기마다 묻기), **Dangerous environment**(쓰기는 무조건 묻고 쿼리를 강조)가 있습니다.
 
 ## 개발
 
@@ -84,7 +90,7 @@ npm run build:vendor        # build/package.json 변경 후 vendor/ 재생성
 
 1. `orca plugin validate .` 통과, 커밋·푸시
 2. `orca-plugin.json` 의 `version` 을 올려 커밋한 뒤 태그:
-   `git tag -a v0.3.0 -m v0.3.0 && git push origin v0.3.0`
+   `git tag -a v0.4.0 -m v0.4.0 && git push origin v0.4.0`
 3. 토픽 추가: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`
 4. https://www.onorca.dev/plugins/maximinhan/orca-db-connector 확인
 

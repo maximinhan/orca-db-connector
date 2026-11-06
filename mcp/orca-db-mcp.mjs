@@ -6,14 +6,14 @@
 import { createInterface } from 'node:readline'
 import { pathToFileURL } from 'node:url'
 
-export const SERVER_INFO = { name: 'orca-db-connector', version: '0.3.0' }
+export const SERVER_INFO = { name: 'orca-db-connector', version: '0.4.0' }
 const PROTOCOL_VERSION = '2025-06-18'
 
 export const TOOLS = [
   {
     name: 'list_connections',
     description:
-      'Lists the database connections saved in Orca DB Connector that agents may use. Each has an id to pass to describe_schema and run_query, an environment label, whether it is marked dangerous, and agentWrites: "always" (writes run at once) or "ask" (the person approves each write in Orca).',
+      'Lists the database connections saved in Orca DB Connector that agents may use. Each has an id to pass to describe_schema and run_query, an environment label, whether it is marked dangerous, agentWrites: "always" (writes run at once) or "ask" (the person approves each write in Orca), and credentialSource ("password" or "aws-secrets-manager"; never the secret itself).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }
   },
   {

@@ -33,7 +33,7 @@ Orca ──실행──▶ 에이전트 CLI ◀──────────┘
 
 | 도구 | 인자 | 응답 |
 | --- | --- | --- |
-| `list_connections` | 없음 | `{ connections: [{ id, name, driver, host, port, database, user, environment, dangerous, agentWrites }] }` (**Expose to agents** 가 켜진 연결만, 비밀번호 없음) |
+| `list_connections` | 없음 | `{ connections: [{ id, name, driver, host, port, database, user, environment, dangerous, agentWrites, credentialSource }] }` (**Expose to agents** 가 켜진 연결만, 비밀번호 없음) |
 | `describe_schema` | `connection` | `{ tables: [{ schema, name, kind, columns: [{ name, type, nullable, primaryKey }] }] }` |
 | `run_query` | `connection`, `sql`, `max_rows?` | `{ columns, rows, rowCount, truncated, durationMs, message? }` |
 

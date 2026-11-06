@@ -2,7 +2,7 @@
 // (storage:own) and each password in its encrypted secrets (secrets:own), so a panel, a worker
 // restart and the next Orca start all see the same data.
 import { hostError } from './errors.ts'
-import { DB_DRIVER_KINDS, type AgentWritePolicy, type DbConnection, type DbDriverKind } from './protocol.ts'
+import { DB_DRIVER_KINDS, type AgentWritePolicy, type DbConnection, type DbCredentials, type DbDriverKind } from './protocol.ts'
 
 export const CONNECTIONS_KEY = 'connections'
 
@@ -26,7 +26,7 @@ function isDriverKind(value: unknown): value is DbDriverKind {
   return typeof value === 'string' && (DB_DRIVER_KINDS as readonly string[]).includes(value)
 }
 
-type OptionalFields = 'environment' | 'agent' | 'agentWrites' | 'dangerous'
+type OptionalFields = 'environment' | 'agent' | 'agentWrites' | 'dangerous' | 'credentials'
 type StoredConnection = Omit<DbConnection, OptionalFields> & Partial<Record<OptionalFields, unknown>>
 
 function isStoredConnection(value: unknown): value is StoredConnection {
@@ -46,6 +46,20 @@ function isStoredConnection(value: unknown): value is StoredConnection {
 }
 
 const ENVIRONMENT_MAX = 32
+const SECRET_ID_MAX = 2048
+
+function normalizeCredentials(value: unknown): DbCredentials {
+  if (typeof value === 'object' && value !== null && (value as { source?: unknown }).source === 'aws-secrets-manager') {
+    const aws = value as Record<string, unknown>
+    return {
+      source: 'aws-secrets-manager',
+      secretId: typeof aws.secretId === 'string' ? aws.secretId.trim().slice(0, SECRET_ID_MAX) : '',
+      region: typeof aws.region === 'string' ? aws.region.trim().slice(0, 64) : '',
+      profile: typeof aws.profile === 'string' ? aws.profile.trim().slice(0, 128) : ''
+    }
+  }
+  return { source: 'password' }
+}
 
 /** Fills defaults for fields added after a connection was stored. */
 function normalize(stored: StoredConnection): DbConnection {
@@ -60,7 +74,8 @@ function normalize(stored: StoredConnection): DbConnection {
     environment: typeof stored.environment === 'string' ? stored.environment.trim().slice(0, ENVIRONMENT_MAX) : '',
     agent: typeof stored.agent === 'boolean' ? stored.agent : true,
     agentWrites: stored.agentWrites === 'always' ? 'always' : 'ask',
-    dangerous: stored.dangerous === true
+    dangerous: stored.dangerous === true,
+    credentials: normalizeCredentials(stored.credentials)
   }
 }
 
@@ -95,6 +110,12 @@ export function validateConnection(input: unknown): DbConnection {
   const normalized = normalize({ ...input, id, name, host: input.host.trim(), database: input.database.trim(), user: input.user.trim() })
   if (typeof input.environment === 'string' && input.environment.trim().length > ENVIRONMENT_MAX) {
     throw hostError('invalid_params', `environment label must be at most ${ENVIRONMENT_MAX} characters`)
+  }
+  if (normalized.credentials.source === 'aws-secrets-manager' && normalized.credentials.secretId === '') {
+    throw hostError('invalid_params', 'an AWS Secrets Manager connection needs the secret name or ARN')
+  }
+  if (normalized.credentials.source === 'aws-secrets-manager' && !/^[A-Za-z0-9/_+=.@:-]+$/.test(normalized.credentials.secretId)) {
+    throw hostError('invalid_params', 'the AWS secret name or ARN has characters AWS does not allow')
   }
   return normalized
 }

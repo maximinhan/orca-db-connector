@@ -31,6 +31,7 @@ import {
   DB_DRIVER_KINDS,
   type ApprovalRequest,
   type DbConnection,
+  type DbCredentials,
   type DbDriverKind,
   type GatewayStatus,
   type QueryLogEntry,
@@ -46,6 +47,10 @@ const DRIVER_OPTIONS = [
   { value: 'sqlite', label: 'SQLite (file)' }
 ]
 const DEFAULT_PORTS: Record<DbDriverKind, number> = { postgres: 5432, mysql: 3306, sqlite: 0 }
+const CREDENTIAL_OPTIONS = [
+  { value: 'password', label: "Password (stored in Orca's secrets)" },
+  { value: 'aws-secrets-manager', label: 'AWS Secrets Manager' }
+]
 const ACCESS_LABELS = { off: 'off', 'read-only': 'read-only', 'read-write': 'read and write' }
 
 /** What the worker last answered; filled by setup() and after each change. */
@@ -69,6 +74,10 @@ const draftEnvironment = atom('draft.environment', '')
 const draftAgent = atom('draft.agent', true)
 const draftAgentWritesAlways = atom('draft.agentWritesAlways', false)
 const draftDangerous = atom('draft.dangerous', false)
+const draftCredentialSource = atom<DbCredentials['source']>('draft.credentialSource', 'password')
+const draftAwsSecretId = atom('draft.awsSecretId', '')
+const draftAwsRegion = atom('draft.awsRegion', '')
+const draftAwsProfile = atom('draft.awsProfile', '')
 
 // Query console.
 const sql = atom('sql', '')
@@ -140,6 +149,10 @@ function clearDraft(): void {
   set(draftAgent, true)
   set(draftAgentWritesAlways, false)
   set(draftDangerous, false)
+  set(draftCredentialSource, 'password')
+  set(draftAwsSecretId, '')
+  set(draftAwsRegion, '')
+  set(draftAwsProfile, '')
   set(note, null)
   set(result, null)
   set(queryError, null)
@@ -160,6 +173,11 @@ function select(connection: DbConnection): void {
   set(draftAgent, connection.agent)
   set(draftAgentWritesAlways, connection.agentWrites === 'always')
   set(draftDangerous, connection.dangerous)
+  const credentials = connection.credentials
+  set(draftCredentialSource, credentials.source)
+  set(draftAwsSecretId, credentials.source === 'aws-secrets-manager' ? credentials.secretId : '')
+  set(draftAwsRegion, credentials.source === 'aws-secrets-manager' ? credentials.region : '')
+  set(draftAwsProfile, credentials.source === 'aws-secrets-manager' ? credentials.profile : '')
   set(note, null)
   set(result, null)
   set(queryError, null)
@@ -184,6 +202,14 @@ async function save(): Promise<void> {
     set(note, { tone: 'danger', text: 'Port must be a whole number between 0 and 65535.' })
     return
   }
+  const aws = read(draftCredentialSource) === 'aws-secrets-manager'
+  if (aws && read(draftAwsSecretId).trim() === '') {
+    set(note, { tone: 'danger', text: 'Give the AWS secret name or ARN.' })
+    return
+  }
+  const credentials: DbCredentials = aws
+    ? { source: 'aws-secrets-manager', secretId: read(draftAwsSecretId).trim(), region: read(draftAwsRegion).trim(), profile: read(draftAwsProfile).trim() }
+    : { source: 'password' }
   const connection: DbConnection = {
     id: read(selectedId) ?? newId(),
     name,
@@ -195,9 +221,10 @@ async function save(): Promise<void> {
     environment: read(draftEnvironment).trim(),
     agent: read(draftAgent),
     agentWrites: read(draftAgentWritesAlways) ? 'always' : 'ask',
-    dangerous: read(draftDangerous)
+    dangerous: read(draftDangerous),
+    credentials
   }
-  const password = read(draftPassword)
+  const password = aws ? '' : read(draftPassword)
   set(busy, true)
   try {
     // Typed by src/protocol.ts; starts the worker if it is not running.
@@ -543,6 +570,7 @@ export default function Panel() {
   const isSqlite = read(draftDriver) === 'sqlite'
   const failure = read(queryError)
   const dangerous = read(draftDangerous)
+  const awsCredentials = read(draftCredentialSource) === 'aws-secrets-manager'
   return (
     <Stack gap="md">
       <Row justify="between">
@@ -609,12 +637,27 @@ export default function Panel() {
       )}
       <Input
         label={isSqlite ? 'Database file' : 'Database'}
-        placeholder={isSqlite ? '~/data/app.db' : ''}
+        placeholder={isSqlite ? '~/data/app.db' : awsCredentials ? 'Empty: dbname from the secret' : ''}
         value={read(draftDatabase)}
         onChange={(value) => set(draftDatabase, value)}
       />
-      {isSqlite ? null : <Input label="User" value={read(draftUser)} onChange={(value) => set(draftUser, value)} />}
       {isSqlite ? null : (
+        <Input
+          label="User"
+          placeholder={awsCredentials ? 'Empty: username from the secret' : ''}
+          value={read(draftUser)}
+          onChange={(value) => set(draftUser, value)}
+        />
+      )}
+      {isSqlite ? null : (
+        <Select
+          label="Credentials"
+          value={read(draftCredentialSource)}
+          options={CREDENTIAL_OPTIONS}
+          onChange={(value) => set(draftCredentialSource, value === 'aws-secrets-manager' ? 'aws-secrets-manager' : 'password')}
+        />
+      )}
+      {isSqlite || awsCredentials ? null : (
         <Input
           label="Password"
           type="password"
@@ -622,6 +665,25 @@ export default function Panel() {
           placeholder={selected === null ? '' : 'Leave empty to keep the stored password'}
           onChange={(value) => set(draftPassword, value)}
         />
+      )}
+      {isSqlite || !awsCredentials ? null : (
+        <Stack gap="xs">
+          <Input
+            label="AWS secret name or ARN"
+            placeholder="prod/app/db or arn:aws:secretsmanager:…"
+            value={read(draftAwsSecretId)}
+            onChange={(value) => set(draftAwsSecretId, value)}
+          />
+          <Row gap="xs">
+            <Input label="AWS region" placeholder="Empty: AWS_REGION or the profile" value={read(draftAwsRegion)} onChange={(value) => set(draftAwsRegion, value)} />
+            <Input label="AWS profile" placeholder="Empty: AWS_PROFILE or default" value={read(draftAwsProfile)} onChange={(value) => set(draftAwsProfile, value)} />
+          </Row>
+          <Text muted size="xs">
+            The secret's password is used, and its host, port, username and dbname fill in any field left empty
+            above (the RDS secret format). Credentials come from AWS_ACCESS_KEY_ID, ~/.aws/credentials or
+            credential_process, else from the installed AWS CLI (SSO and roles). The value is cached in the worker for 5 minutes and never shown.
+          </Text>
+        </Stack>
       )}
       <Checkbox
         label="Dangerous environment"

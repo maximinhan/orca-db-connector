@@ -35,7 +35,7 @@ Orca ──launches──▶ agent CLI ◀────────┘ env: ORCA_
 
 | Tool | Arguments | Answer |
 | --- | --- | --- |
-| `list_connections` | none | `{ connections: [{ id, name, driver, host, port, database, user, environment, dangerous, agentWrites }] }` (only connections with **Expose to agents** on; never a password) |
+| `list_connections` | none | `{ connections: [{ id, name, driver, host, port, database, user, environment, dangerous, agentWrites, credentialSource }] }` (only connections with **Expose to agents** on; never a password) |
 | `describe_schema` | `connection` | `{ tables: [{ schema, name, kind, columns: [{ name, type, nullable, primaryKey }] }] }` |
 | `run_query` | `connection`, `sql`, `max_rows?` | `{ columns, rows, rowCount, truncated, durationMs, message? }` |
 

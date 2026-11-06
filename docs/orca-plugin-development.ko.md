@@ -189,7 +189,7 @@ Orca 검증기를 대체하지 않습니다. CI(`.github/workflows/validate.yml`
 ### 7-1. 커뮤니티 디렉터리 (onorca.dev/plugins) — 기본 경로
 
 1. `orca plugin validate .` 통과, 저장소 소유자(`maximinhan`)의 공개 GitHub 저장소에 커밋·푸시.
-2. `orca-plugin.json` 의 `version` 을 올려 커밋한 뒤 그 커밋에 태그: `git tag -a v0.3.0 -m v0.3.0 && git push origin v0.3.0`
+2. `orca-plugin.json` 의 `version` 을 올려 커밋한 뒤 그 커밋에 태그: `git tag -a v0.4.0 -m v0.4.0 && git push origin v0.4.0`
    (`vX.Y.Z` 형식).
 3. 저장소에 `orca-plugin` 토픽 추가: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`.
 4. https://www.onorca.dev/plugins/maximinhan/orca-db-connector 에서 등재 상태 확인.

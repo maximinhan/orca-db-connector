@@ -27,6 +27,11 @@ The install key is `maximinhan.db-connector` (Orca names the publisher after the
 - **Drivers**: SQLite through Node's built-in `node:sqlite`; PostgreSQL (`pg`) and MySQL
   (`mysql2`) bundled into `vendor/` by `build/build.mjs`, because an installed plugin cannot carry
   `node_modules`.
+- **Credentials**: a password kept in Orca's encrypted secrets, or an **AWS Secrets Manager**
+  secret (RDS format: its `password`, and `host`/`port`/`username`/`dbname` for any field you
+  leave empty). AWS credentials come from the environment, `~/.aws/credentials` or
+  `credential_process` (signed with SigV4, no SDK bundled), else from the installed AWS CLI (SSO,
+  roles). Secrets are cached in the worker for 5 minutes and never shown or logged.
 
 ## Layout
 
@@ -38,6 +43,7 @@ The install key is `maximinhan.db-connector` (Orca names the publisher after the
 | `src/protocol.ts` | Panel ↔ worker contract, type-checked on both sides |
 | `src/connections.ts` | Connection registry: list in `storage:own`, passwords in `secrets:own` |
 | `src/db/service.ts` | Test, schema and query over a connection; the write policy, approvals and logging |
+| `src/aws/` | SigV4 signing, the AWS credential chain and the Secrets Manager client (CLI fallback) |
 | `src/approvals/queue.ts` | Agent writes waiting for the person's decision |
 | `src/log/query-log.ts` | The activity log and the rows of recent queries |
 | `src/sql/classify.ts` | Read/write classification of SQL before a read-only session is opened |
@@ -58,7 +64,8 @@ The install key is `maximinhan.db-connector` (Orca names the publisher after the
 | Query timeout (ms) | 30000 | Server-side statement timeout (PostgreSQL, MySQL) |
 | Max rows per query | 500 | Rows past this are dropped and the result marked truncated |
 
-Each connection also has an **Environment label** (`local`, `dev`, `prod`, …), **Expose to
+Each connection also has an **Environment label** (`local`, `dev`, `prod`, …), a **Credentials**
+source (password or AWS Secrets Manager with secret name/ARN, region and profile), **Expose to
 agents**, **Always allow agent writes** (off: each agent write asks you) and **Dangerous
 environment** (writes always ask, queries are highlighted).
 
@@ -89,7 +96,7 @@ to re-run.
 
 1. `orca plugin validate .` passes; commit and push.
 2. Bump `version` in `orca-plugin.json`, commit, tag and push the tag:
-   `git tag -a v0.3.0 -m v0.3.0 && git push origin v0.3.0`
+   `git tag -a v0.4.0 -m v0.4.0 && git push origin v0.4.0`
 3. Add the topic: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`
 4. Check https://www.onorca.dev/plugins/maximinhan/orca-db-connector
 
