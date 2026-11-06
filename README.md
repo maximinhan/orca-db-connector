@@ -28,8 +28,8 @@ The install key is `maximinhan.db-connector` (Orca names the publisher after the
   (`mysql2`) bundled into `vendor/` by `build/build.mjs`, because an installed plugin cannot carry
   `node_modules`.
 - **Credentials**: a password kept in Orca's encrypted secrets, or an **AWS Secrets Manager**
-  secret (RDS format: its `password`, and `host`/`port`/`username`/`dbname` for any field you
-  leave empty). AWS credentials come from the environment, `~/.aws/credentials` or
+  secret in the RDS format, which then supplies host, port, username, dbname and password (the
+  form hides those fields). AWS credentials come from the environment, `~/.aws/credentials` or
   `credential_process` (signed with SigV4, no SDK bundled), else from the installed AWS CLI (SSO,
   roles). Secrets are cached in the worker for 5 minutes and never shown or logged.
 

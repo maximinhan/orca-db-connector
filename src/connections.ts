@@ -124,7 +124,9 @@ export function describeConnection(connection: DbConnection): string {
   const target =
     connection.driver === 'sqlite'
       ? `sqlite:${connection.database || '(no file)'}`
-      : `${connection.driver}://${connection.user ? `${connection.user}@` : ''}${connection.host}:${connection.port}/${connection.database}`
+      : connection.credentials.source === 'aws-secrets-manager' && connection.host === ''
+        ? `${connection.driver} via AWS secret ${connection.credentials.secretId}`
+        : `${connection.driver}://${connection.user ? `${connection.user}@` : ''}${connection.host}:${connection.port}/${connection.database}`
   return connection.environment ? `[${connection.environment}] ${target}` : target
 }
 

@@ -97,6 +97,9 @@ function describe(connection: DbConnection): string {
   if (connection.driver === 'sqlite') {
     return `sqlite:${connection.database || '(no file)'}`
   }
+  if (connection.credentials.source === 'aws-secrets-manager') {
+    return `${connection.driver} via AWS secret ${connection.credentials.secretId}`
+  }
   const user = connection.user ? `${connection.user}@` : ''
   return `${connection.driver}://${user}${connection.host}:${connection.port}/${connection.database}`
 }
@@ -197,12 +200,12 @@ async function save(): Promise<void> {
     set(note, { tone: 'danger', text: 'Give the connection a name first.' })
     return
   }
-  const port = Number(read(draftPort))
+  const aws = read(draftDriver) !== 'sqlite' && read(draftCredentialSource) === 'aws-secrets-manager'
+  const port = aws ? 0 : Number(read(draftPort))
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     set(note, { tone: 'danger', text: 'Port must be a whole number between 0 and 65535.' })
     return
   }
-  const aws = read(draftCredentialSource) === 'aws-secrets-manager'
   if (aws && read(draftAwsSecretId).trim() === '') {
     set(note, { tone: 'danger', text: 'Give the AWS secret name or ARN.' })
     return
@@ -214,10 +217,10 @@ async function save(): Promise<void> {
     id: read(selectedId) ?? newId(),
     name,
     driver: read(draftDriver),
-    host: read(draftHost).trim(),
+    host: aws ? '' : read(draftHost).trim(),
     port,
-    database: read(draftDatabase).trim(),
-    user: read(draftUser).trim(),
+    database: aws ? '' : read(draftDatabase).trim(),
+    user: aws ? '' : read(draftUser).trim(),
     environment: read(draftEnvironment).trim(),
     agent: read(draftAgent),
     agentWrites: read(draftAgentWritesAlways) ? 'always' : 'ask',
@@ -630,26 +633,6 @@ export default function Panel() {
       />
       <Select label="Driver" value={read(draftDriver)} options={DRIVER_OPTIONS} onChange={changeDriver} />
       {isSqlite ? null : (
-        <Row gap="xs">
-          <Input label="Host" value={read(draftHost)} onChange={(value) => set(draftHost, value)} />
-          <Input label="Port" value={read(draftPort)} onChange={(value) => set(draftPort, value)} />
-        </Row>
-      )}
-      <Input
-        label={isSqlite ? 'Database file' : 'Database'}
-        placeholder={isSqlite ? '~/data/app.db' : awsCredentials ? 'Empty: dbname from the secret' : ''}
-        value={read(draftDatabase)}
-        onChange={(value) => set(draftDatabase, value)}
-      />
-      {isSqlite ? null : (
-        <Input
-          label="User"
-          placeholder={awsCredentials ? 'Empty: username from the secret' : ''}
-          value={read(draftUser)}
-          onChange={(value) => set(draftUser, value)}
-        />
-      )}
-      {isSqlite ? null : (
         <Select
           label="Credentials"
           value={read(draftCredentialSource)}
@@ -657,6 +640,21 @@ export default function Panel() {
           onChange={(value) => set(draftCredentialSource, value === 'aws-secrets-manager' ? 'aws-secrets-manager' : 'password')}
         />
       )}
+      {isSqlite || awsCredentials ? null : (
+        <Row gap="xs">
+          <Input label="Host" value={read(draftHost)} onChange={(value) => set(draftHost, value)} />
+          <Input label="Port" value={read(draftPort)} onChange={(value) => set(draftPort, value)} />
+        </Row>
+      )}
+      {!isSqlite && awsCredentials ? null : (
+        <Input
+          label={isSqlite ? 'Database file' : 'Database'}
+          placeholder={isSqlite ? '~/data/app.db' : ''}
+          value={read(draftDatabase)}
+          onChange={(value) => set(draftDatabase, value)}
+        />
+      )}
+      {isSqlite || awsCredentials ? null : <Input label="User" value={read(draftUser)} onChange={(value) => set(draftUser, value)} />}
       {isSqlite || awsCredentials ? null : (
         <Input
           label="Password"
@@ -679,9 +677,10 @@ export default function Panel() {
             <Input label="AWS profile" placeholder="Empty: AWS_PROFILE or default" value={read(draftAwsProfile)} onChange={(value) => set(draftAwsProfile, value)} />
           </Row>
           <Text muted size="xs">
-            The secret's password is used, and its host, port, username and dbname fill in any field left empty
-            above (the RDS secret format). Credentials come from AWS_ACCESS_KEY_ID, ~/.aws/credentials or
-            credential_process, else from the installed AWS CLI (SSO and roles). The value is cached in the worker for 5 minutes and never shown.
+            Host, port, user, database and password all come from the secret (the RDS format: host, port,
+            username, dbname, password). AWS credentials come from AWS_ACCESS_KEY_ID, ~/.aws/credentials or
+            credential_process, else from the installed AWS CLI (SSO and roles). The value is cached in the
+            worker for 5 minutes and never shown.
           </Text>
         </Stack>
       )}

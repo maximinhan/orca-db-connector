@@ -24,8 +24,8 @@
   [docs/agent-access.ko.md](docs/agent-access.ko.md) 참고.
 - **드라이버**: SQLite 는 Node 내장 `node:sqlite`, PostgreSQL(`pg`)과 MySQL(`mysql2`)은
   `build/build.mjs` 가 `vendor/` 에 번들합니다 (설치된 플러그인은 `node_modules` 를 가질 수 없음).
-- **자격 증명**: Orca 암호화 secrets 에 보관한 비밀번호, 또는 **AWS Secrets Manager** 시크릿(RDS 형식:
-  `password` 를 쓰고, 비워 둔 필드는 `host`/`port`/`username`/`dbname` 으로 채움). AWS 자격 증명은 환경
+- **자격 증명**: Orca 암호화 secrets 에 보관한 비밀번호, 또는 RDS 형식의 **AWS Secrets Manager** 시크릿.
+  후자는 host, port, username, dbname, password 를 모두 시크릿에서 가져오며 폼에서 해당 필드가 사라집니다. AWS 자격 증명은 환경
   변수, `~/.aws/credentials`, `credential_process` 에서 읽어 SigV4 로 직접 서명하고(SDK 번들 없음), 없으면
   설치된 AWS CLI(SSO, 역할)로 폴백합니다. 시크릿은 워커에 5분 캐시되며 표시·기록되지 않습니다.
 

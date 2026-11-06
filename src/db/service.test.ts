@@ -78,6 +78,21 @@ test('fills blank connection fields from the secret and retries once with a fres
   assert.equal(again.ok, true, again.message)
   assert.deepEqual(secrets.calls, [{ fresh: false }, { fresh: true }])
 
+  // A secret without the connection fields is refused before any connection attempt.
+  const pg: DbConnection = { ...awsConnection, id: 'pg', driver: 'postgres' }
+  const pgService = new DbService({
+    getConnection: async () => pg,
+    password: async () => null,
+    settings: async () => DEFAULT_SETTINGS,
+    approvals: new ApprovalQueue({ timeoutMs: 1000 }),
+    log: new QueryLog(),
+    secrets
+  })
+  secrets.answers = [{ password: 'p', username: 'u', host: null, port: null, database: null, engine: null, raw: {} }]
+  const incomplete = await pgService.test('pg')
+  assert.equal(incomplete.ok, false)
+  assert.match(incomplete.message, /does not provide host, port, database/)
+
   // Two failures in a row surface the error.
   secrets.calls = []
   secrets.answers = [secret(path.join(dir, 'missing', 'a.db')), secret(path.join(dir, 'missing', 'b.db'))]

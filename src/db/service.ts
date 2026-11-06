@@ -83,10 +83,19 @@ export class DbService {
     const secret = await this.deps.secrets.get({ secretId, region, profile }, { fresh })
     const target: DbConnection = {
       ...connection,
-      host: connection.host || secret.host || connection.host,
-      port: connection.port || secret.port || connection.port,
-      user: connection.user || secret.username || connection.user,
-      database: connection.database || secret.database || connection.database
+      host: connection.host || secret.host || '',
+      port: connection.port || secret.port || 0,
+      user: connection.user || secret.username || '',
+      database: connection.database || secret.database || ''
+    }
+    if (connection.driver !== 'sqlite') {
+      const missing = (['host', 'port', 'user', 'database'] as const).filter((field) => !target[field])
+      if (missing.length > 0) {
+        throw hostError(
+          'invalid_params',
+          `the AWS secret "${secretId}" does not provide ${missing.join(', ')}; it needs the RDS format (host, port, username, dbname, password)`
+        )
+      }
     }
     return { target, password: secret.password }
   }
