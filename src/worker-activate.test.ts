@@ -24,7 +24,19 @@ function fakeOrca(settings: Record<string, unknown> = {}) {
     commands: { register: () => disposable },
     events: { on: () => disposable },
     hooks: { on: (event: string, handler: HookHandler) => (hooks.set(event, handler), disposable) },
-    host: { call: async (method: string, params: unknown) => (hostCalls.push({ method, params }), { delivered: true }), has: () => false },
+    host: {
+      call: async (method: string, params: unknown) => {
+        hostCalls.push({ method, params })
+        if (method === 'agents.list') {
+          return { agents: [{ terminalId: 't1', title: 'Claude Code', agent: 'claude', state: 'waiting', stateStartedAt: 0 }, { terminalId: null, title: null, agent: null, state: 'done', stateStartedAt: 0 }] }
+        }
+        if (method === 'terminal.sendText') {
+          return { accepted: true }
+        }
+        return { delivered: true }
+      },
+      has: (method: string) => method === 'agents.list' || method === 'terminal.sendText'
+    },
     panels: {
       handle: (name: string, handler: Handler) => (handlers.set(name, handler), disposable),
       post: (event: string, payload: unknown) => void posts.push({ event, payload })
@@ -72,7 +84,7 @@ const memory = {
 }
 
 test('activate wires panel requests, the gateway and the launch hook', async () => {
-  const { orca, request, hooks, posts, logs, secrets, storage } = fakeOrca({ agentAccess: 'read-only', maxRows: 2 })
+  const { orca, request, hooks, posts, hostCalls, logs, secrets, storage } = fakeOrca({ agentAccess: 'read-only', maxRows: 2 })
   await activate(orca)
   try {
     const status = await request<{ running: boolean; url: string; mcpServerPath: string }>('gateway.status')
@@ -127,6 +139,18 @@ test('activate wires panel requests, the gateway and the launch hook', async () 
     assert.equal(codex.continued.command, 'codex')
     assert.equal(codex.continued.env.ORCA_DB_MCP_SERVER, MCP_SERVER_PATH)
 
+    // Running agents are listed, and "connect" types the gateway details into one.
+    const agents = await request<{ agents: { terminalId: string; agent: string | null }[] }>('agents.list')
+    assert.deepEqual(agents.agents.map((agent) => [agent.terminalId, agent.agent]), [['t1', 'claude']])
+    await request('ui.hello', { locale: 'ko-KR' })
+    assert.deepEqual(await request('agents.connect', { terminalId: 't1' }), { sent: true })
+    const typed = hostCalls.find((call) => call.method === 'terminal.sendText')?.params as { terminalId: string; text: string; enter: boolean }
+    assert.equal(typed.terminalId, 't1')
+    assert.equal(typed.enter, true)
+    assert.match(typed.text, new RegExp(`Bearer ${claude.continued.env.ORCA_DB_GATEWAY_TOKEN}`))
+    assert.match(typed.text, /x-orca-agent: claude/)
+    assert.match(typed.text, /Only read statements/)
+
     // The gateway answers with the same token the hook hands out.
     const health = await fetch(`${status.url}/health`, { headers: { authorization: `Bearer ${claude.continued.env.ORCA_DB_GATEWAY_TOKEN}` } })
     assert.equal(health.status, 200)
@@ -161,6 +185,23 @@ test('an agent write waits for the panel, notifies, and the decision reaches the
     const notification = hostCalls.find((call) => call.method === 'notifications.show')
     assert.match((notification?.params as { title: string }).title, /claude wants to write to Memory \(prod\)/)
 
+    // Korean notifications once the panel reported a Korean UI.
+    await request('ui.hello', { locale: 'ko' })
+    await request('connections.save', { connection: { ...memory, id: 'mem2', name: 'Memory 2' } })
+    const second = fetch(`${url}/connections/mem2/query`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ sql: 'CREATE TABLE t2 (a)' })
+    })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    const korean = hostCalls.filter((call) => call.method === 'notifications.show').at(-1)
+    assert.match((korean?.params as { title: string }).title, /쓰기를 요청합니다/)
+    const waiting = await request<{ approvals: ApprovalRequest[] }>('approvals.list')
+    const forMem2 = waiting.approvals.find((approval) => approval.connectionId === 'mem2')
+    assert.ok(forMem2)
+    await request('approvals.decide', { id: forMem2.id, approve: false })
+    assert.equal((await second).status, 403)
+
     assert.deepEqual(await request('approvals.decide', { id: approvals[0]!.id, approve: true }), { decided: true })
     const response = await pending
     assert.equal(response.status, 200)
@@ -173,7 +214,7 @@ test('an agent write waits for the panel, notifies, and the decision reaches the
 })
 
 test('with agent access off the hook passes launches through unchanged', async () => {
-  const { orca, hooks } = fakeOrca({ agentAccess: 'off' })
+  const { orca, hooks, request } = fakeOrca({ agentAccess: 'off' })
   await activate(orca)
   try {
     const hook = hooks.get('agent.launch.before')
@@ -181,6 +222,7 @@ test('with agent access off the hook passes launches through unchanged', async (
     let passed: unknown = 'not called'
     hook({ agent: 'claude', command: 'claude', env: {} }, (event?: unknown) => (passed = event))
     assert.equal(passed, undefined)
+    await assert.rejects(request('agents.connect', { terminalId: 't1' }), /agent access is off/)
   } finally {
     await deactivate()
   }

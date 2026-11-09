@@ -99,6 +99,21 @@ error, and the rows: the worker keeps the rows of the last 50 queries (capped by
 query**), so recent results can be inspected without running them again. Entries persist in the
 plugin's storage across restarts; rows do not. **Clear log** forgets both.
 
+## Agents that were already running
+
+The hook fires only when Orca launches an agent, so an agent started before the plugin was
+enabled (or before the worker restarted and changed the token) has no `ORCA_DB_*` variables and
+no MCP tools. The panel's **Agent access** section lists the agents in the focused workspace
+(`agents.list`, the `agent:read` capability) with a **Connect** button that types a short
+message into that agent's terminal (`terminal.sendText`, the `terminal:send` capability): the
+gateway URL, the bearer token, the three curl calls and the current write rules. The agent can
+then use the gateway from its shell at once. It is sent as a prompt, so it lands in the agent's
+transcript; the token is the loopback-only one of this worker start.
+
+The `orca-db` MCP tools cannot be added to a running session: restart the agent from Orca (a new
+agent tab) to get them. Orca's own restores and resumes of saved sessions are not launches and
+do not run the hook either.
+
 ## Claude Code
 
 Nothing to do: with **Add the MCP server to Claude Code** on (the default), every Claude Code

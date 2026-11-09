@@ -17,7 +17,9 @@ const gateway: GatewayStatus = {
 const quiet = {
   'gateway.status': () => gateway,
   'approvals.list': () => ({ approvals: [] }),
-  'log.list': () => ({ entries: [] })
+  'log.list': () => ({ entries: [] }),
+  'agents.list': () => ({ agents: [] }),
+  'ui.hello': () => ({ ok: true as const })
 }
 
 const local: DbConnection = {
@@ -168,5 +170,28 @@ test('shows an agent write waiting for approval and decides it', async () => {
 
   assert.deepEqual(decisions, [{ id: 'apr-1', approve: true }])
   assert.equal(panel.find({ text: /claude wants to write/ }), undefined)
+  assert.deepEqual(panel.errors, [])
+})
+
+test('sends the gateway details to a running agent', async () => {
+  const sent: string[] = []
+  const host = mockHost({
+    requests: {
+      ...quiet,
+      'connections.list': () => ({ connections: [] }),
+      'agents.list': () => ({ agents: [{ terminalId: 't1', title: 'Claude Code', agent: 'claude', state: 'waiting' }] }),
+      'agents.connect': ({ terminalId }) => {
+        sent.push(terminalId)
+        return { sent: true }
+      }
+    }
+  })
+  panel = await mount(panelModule, { host })
+  assert.ok(panel.find({ text: /Claude Code/ }))
+
+  await panel.press({ text: 'Connect' })
+
+  assert.deepEqual(sent, ['t1'])
+  assert.ok(panel.find({ text: /Connection details sent to Claude Code/ }))
   assert.deepEqual(panel.errors, [])
 })

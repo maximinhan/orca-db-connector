@@ -4,7 +4,7 @@
   "execution": "trusted-worker",
   "id": "db-connector",
   "name": "DB Connector",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Save PostgreSQL, MySQL and SQLite connections (passwords in Orca's secrets or from AWS Secrets Manager), browse schemas and run queries from a sidebar panel, and let the agents Orca launches query them through a local MCP server. Agent writes wait for your approval unless a connection allows them; every query is logged with its rows.",
   "author": {
     "name": "maximinhan",
@@ -99,6 +99,12 @@
     },
     {
       "kind": "notifications:show"
+    },
+    {
+      "kind": "agent:read"
+    },
+    {
+      "kind": "terminal:send"
     }
   ]
 }

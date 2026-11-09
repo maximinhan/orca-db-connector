@@ -9,6 +9,7 @@ import {
   CodeView,
   Collapsible,
   EmptyState,
+  env,
   Heading,
   Input,
   KeyValue,
@@ -28,6 +29,7 @@ import {
   Tree,
   type PanelContext
 } from 'orca'
+import { strings } from './i18n'
 import {
   DB_DRIVER_KINDS,
   type ApprovalRequest,
@@ -37,6 +39,7 @@ import {
   type GatewayStatus,
   type QueryLogEntry,
   type QueryResult,
+  type RunningAgent,
   type SchemaTable
 } from './protocol'
 
@@ -48,11 +51,6 @@ const DRIVER_OPTIONS = [
   { value: 'sqlite', label: 'SQLite (file)' }
 ]
 const DEFAULT_PORTS: Record<DbDriverKind, number> = { postgres: 5432, mysql: 3306, sqlite: 0 }
-const CREDENTIAL_OPTIONS = [
-  { value: 'password', label: "Password (stored in Orca's secrets)" },
-  { value: 'aws-secrets-manager', label: 'AWS Secrets Manager' }
-]
-const ACCESS_LABELS = { off: 'off', 'read-only': 'read-only', 'read-write': 'read and write' }
 
 /** What the worker last answered; filled by setup() and after each change. */
 const connections = atom<DbConnection[]>([])
@@ -62,6 +60,8 @@ const note = atom<Note | null>(null)
 const busy = atom(false)
 const gateway = atom<GatewayStatus | null>(null)
 const approvals = atom<ApprovalRequest[]>([])
+const runningAgents = atom<RunningAgent[]>([])
+const agentNote = atom<Note | null>(null)
 
 // Keyed memory atoms: a half-typed form survives a hot reload while developing.
 const draftName = atom('draft.name', '')
@@ -130,6 +130,10 @@ async function refreshApprovals(): Promise<void> {
   set(approvals, (await plugin.request('approvals.list')).approvals)
 }
 
+async function refreshAgents(): Promise<void> {
+  set(runningAgents, (await plugin.request('agents.list')).agents)
+}
+
 async function refreshLog(): Promise<void> {
   const { entries } = await plugin.request('log.list')
   set(logEntries, entries)
@@ -196,19 +200,20 @@ function changeDriver(value: string): void {
 }
 
 async function save(): Promise<void> {
+  const t = strings()
   const name = read(draftName).trim()
   if (name === '') {
-    set(note, { tone: 'danger', text: 'Give the connection a name first.' })
+    set(note, { tone: 'danger', text: t.needName })
     return
   }
   const aws = read(draftDriver) !== 'sqlite' && read(draftCredentialSource) === 'aws-secrets-manager'
   const port = aws ? 0 : Number(read(draftPort))
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    set(note, { tone: 'danger', text: 'Port must be a whole number between 0 and 65535.' })
+    set(note, { tone: 'danger', text: t.needPort })
     return
   }
   if (aws && read(draftAwsSecretId).trim() === '') {
-    set(note, { tone: 'danger', text: 'Give the AWS secret name or ARN.' })
+    set(note, { tone: 'danger', text: t.needSecret })
     return
   }
   const credentials: DbCredentials = aws
@@ -238,7 +243,7 @@ async function save(): Promise<void> {
     })
     set(selectedId, connection.id)
     set(draftPassword, '')
-    set(note, { tone: 'success', text: `Saved ${connection.name}.` })
+    set(note, { tone: 'success', text: t.savedNote(connection.name) })
     await refresh()
   } catch (error) {
     fail(error)
@@ -253,7 +258,7 @@ async function test(): Promise<void> {
     return
   }
   set(busy, true)
-  set(note, { tone: 'neutral', text: 'Connecting…' })
+  set(note, { tone: 'neutral', text: strings().connecting })
   try {
     const answer = await plugin.request('connections.test', { id }, { timeoutMs: 60_000 })
     set(note, { tone: answer.ok ? 'success' : 'danger', text: `${answer.message} (${answer.durationMs} ms)` })
@@ -273,7 +278,7 @@ async function remove(): Promise<void> {
   try {
     await plugin.request('connections.remove', { id })
     clearDraft()
-    set(note, { tone: 'neutral', text: 'Connection removed.' })
+    set(note, { tone: 'neutral', text: strings().removed })
     await refresh()
   } catch (error) {
     fail(error)
@@ -342,6 +347,15 @@ async function decide(id: string, approve: boolean): Promise<void> {
   }
 }
 
+async function connectAgent(agent: RunningAgent): Promise<void> {
+  try {
+    await plugin.request('agents.connect', { terminalId: agent.terminalId })
+    set(agentNote, { tone: 'success', text: strings().connected(agent.title) })
+  } catch (error) {
+    set(agentNote, { tone: 'danger', text: errorText(error) })
+  }
+}
+
 async function showLogEntry(entry: QueryLogEntry): Promise<void> {
   if (read(logSelectedId) === entry.id) {
     set(logSelectedId, null)
@@ -377,13 +391,21 @@ export function setup(ctx: PanelContext): void {
     plugin.on('approvals.changed', () => void refreshApprovals().catch(fail)),
     plugin.on('log.changed', () => void refreshLog().catch(fail))
   )
+  void plugin.request('ui.hello', { locale: env.locale ?? 'en' }).catch(() => undefined)
   void refresh().catch(fail)
   void refreshGateway().catch(() => set(gateway, null))
   void refreshApprovals().catch(() => set(approvals, []))
+  void refreshAgents().catch(() => set(runningAgents, []))
   void refreshLog().catch(() => set(logEntries, []))
 }
 
+function accessLabel(access: GatewayStatus['agentAccess']): string {
+  const t = strings()
+  return access === 'off' ? t.accessOff : access === 'read-only' ? t.accessReadOnly : t.accessReadWrite
+}
+
 function Approvals() {
+  const t = strings()
   const waiting = read(approvals)
   if (waiting.length === 0) {
     return null
@@ -394,21 +416,25 @@ function Approvals() {
         <Callout
           key={request.id}
           tone={request.dangerous ? 'danger' : 'warning'}
-          title={`${request.agent ?? 'An agent'} wants to write to ${request.connectionName}${request.environment ? ` (${request.environment})` : ''}`}
+          title={t.agentWantsToWrite(request.agent ?? t.anAgent, `${request.connectionName}${request.environment ? ` (${request.environment})` : ''}`)}
         >
           <Stack gap="xs">
-            {request.dangerous ? <Text tone="danger" weight="semibold">Dangerous environment</Text> : null}
-            <CodeView code={request.sql} language="sql" label="Statement" maxHeight="sm" />
+            {request.dangerous ? (
+              <Text tone="danger" weight="semibold">
+                {t.dangerousEnvironment}
+              </Text>
+            ) : null}
+            <CodeView code={request.sql} language="sql" label={t.statement} maxHeight="sm" />
             <Row gap="xs" justify="between">
               <Text muted size="xs">
-                Asked <RelativeTime at={request.createdAt} />, expires <RelativeTime at={request.expiresAt} />
+                {t.askedExpires} <RelativeTime at={request.createdAt} />, {t.expires} <RelativeTime at={request.expiresAt} />
               </Text>
               <Row gap="xs">
                 <Button tone="danger" icon="close" onPress={() => void decide(request.id, false)}>
-                  Refuse
+                  {t.refuse}
                 </Button>
                 <Button tone={request.dangerous ? 'danger' : 'accent'} icon="check" onPress={() => void decide(request.id, true)}>
-                  Approve
+                  {t.approve}
                 </Button>
               </Row>
             </Row>
@@ -420,58 +446,88 @@ function Approvals() {
 }
 
 function GatewaySection() {
+  const t = strings()
   const status = read(gateway)
   if (status === null) {
     return null
   }
   if (!status.running) {
     return (
-      <Callout tone="warning" title="Agent gateway is not running">
-        {status.error ?? 'The worker could not start the local gateway. See orca plugin logs.'}
+      <Callout tone="warning" title={t.gatewayNotRunning}>
+        {status.error ?? t.gatewayNotRunningBody}
       </Callout>
     )
   }
+  const agents = read(runningAgents)
+  const message = read(agentNote)
   return (
-    <Collapsible title="Agent access" description={`Gateway ${status.url}, ${ACCESS_LABELS[status.agentAccess]}`}>
+    <Collapsible title={t.agentAccess} description={t.gatewayDescription(status.url ?? '', accessLabel(status.agentAccess))}>
       <Stack gap="sm">
         <KeyValue
-          label="Agent gateway"
+          label={t.agentAccess}
           items={[
-            { label: 'Gateway', value: status.url ?? '', code: true },
-            { label: 'Access', value: ACCESS_LABELS[status.agentAccess] },
-            { label: 'MCP server', value: status.mcpServerPath, code: true }
+            { label: t.gateway, value: status.url ?? '', code: true },
+            { label: t.access, value: accessLabel(status.agentAccess) },
+            { label: t.mcpServer, value: status.mcpServerPath, code: true }
           ]}
         />
         <Text muted size="xs">
-          Agents launched from Orca get ORCA_DB_GATEWAY_URL, ORCA_DB_GATEWAY_TOKEN and ORCA_DB_MCP_SERVER;
-          Claude Code also gets the orca-db MCP tools. Agent writes wait for your approval here unless the
-          connection allows them at once. Change access in the plugin settings.
+          {t.gatewayHelp}
         </Text>
+        <Row justify="between">
+          <Heading level={3}>{t.runningAgents}</Heading>
+          <Button variant="ghost" icon="refresh" onPress={() => void refreshAgents().catch(fail)}>
+            {t.refresh}
+          </Button>
+        </Row>
+        <Text muted size="xs">
+          {t.runningAgentsHelp}
+        </Text>
+        {message ? <Callout tone={message.tone}>{message.text}</Callout> : null}
+        {agents.length === 0 ? (
+          <Text muted>{t.noRunningAgents}</Text>
+        ) : (
+          <List label={t.runningAgents}>
+            {agents.map((agent) => (
+              <ListItem key={agent.terminalId} title={agent.title} description={`${agent.agent ?? t.agent} · ${agent.state}`} icon="agent">
+                <Button
+                  variant="outline"
+                  icon="link"
+                  onPress={() => void connectAgent(agent)}
+                  disabled={status.agentAccess === 'off'}
+                >
+                  {t.connect}
+                </Button>
+              </ListItem>
+            ))}
+          </List>
+        )}
       </Stack>
     </Collapsible>
   )
 }
 
 function SchemaTree() {
+  const t = strings()
   const tables = read(schema)
   if (tables === null) {
     return null
   }
   if (tables.length === 0) {
-    return <Text muted>No tables or views.</Text>
+    return <Text muted>{t.noTables}</Text>
   }
   return (
     <Tree
-      label="Tables and views"
+      label={t.tablesAndViews}
       items={tables.map((table) => ({
         key: `${table.schema ?? ''}.${table.name}`,
         label: table.schema ? `${table.schema}.${table.name}` : table.name,
-        description: `${table.kind}, ${table.columns.length} columns`,
+        description: `${table.kind}, ${t.columns(table.columns.length)}`,
         icon: table.kind === 'view' ? 'file' : 'database',
         children: table.columns.map((column) => ({
           key: `${table.schema ?? ''}.${table.name}.${column.name}`,
           label: column.name,
-          description: `${column.type}${column.primaryKey ? ', primary key' : ''}${column.nullable ? '' : ', not null'}`
+          description: `${column.type}${column.primaryKey ? `, ${t.primaryKey}` : ''}${column.nullable ? '' : `, ${t.notNull}`}`
         }))
       }))}
     />
@@ -479,13 +535,14 @@ function SchemaTree() {
 }
 
 function ResultView({ answer, label }: { answer: QueryResult | null; label: string }) {
+  const t = strings()
   if (answer === null) {
     return null
   }
   if (answer.columns.length === 0) {
     return (
       <Text tone="success">
-        {answer.message ?? `${answer.rowCount} row(s) changed`} ({answer.durationMs} ms)
+        {answer.message ?? t.rowsChanged(answer.rowCount)} ({answer.durationMs} ms)
       </Text>
     )
   }
@@ -495,50 +552,53 @@ function ResultView({ answer, label }: { answer: QueryResult | null; label: stri
         label={label}
         columns={answer.columns.map((column) => ({ key: column, label: column, minWidth: 'xs' }))}
         rows={answer.rows.map((row, index) => ({ key: String(index), cells: row }))}
-        emptyText="No rows"
+        emptyText={t.noRows}
       />
       <Text muted size="xs">
-        {answer.rowCount} row(s){answer.truncated ? ', truncated at the Max rows setting' : ''} in {answer.durationMs} ms
+        {t.rowsSummary(answer.rowCount, answer.truncated, answer.durationMs)}
       </Text>
     </Stack>
   )
 }
 
 function statusTone(entry: QueryLogEntry): 'neutral' | 'accent' | 'success' | 'warning' | 'danger' {
-  if (entry.status !== 'ok') {
-    return 'danger'
-  }
-  if (entry.dangerous) {
+  if (entry.status !== 'ok' || entry.dangerous) {
     return 'danger'
   }
   return entry.kind === 'write' ? 'warning' : 'neutral'
 }
 
+function statusLabel(entry: QueryLogEntry): string {
+  const t = strings()
+  return entry.status === 'ok' ? t.statusOk : entry.status === 'error' ? t.statusError : entry.status === 'denied' ? t.statusDenied : t.statusTimeout
+}
+
 function ActivityLog() {
+  const t = strings()
   const entries = read(logEntries)
   const selected = read(logSelectedId)
   const current = entries.find((entry) => entry.id === selected) ?? null
   return (
-    <Collapsible title="Activity" description={`${entries.length} queries logged`}>
+    <Collapsible title={t.activity} description={t.queriesLogged(entries.length)}>
       <Stack gap="sm">
         {entries.length === 0 ? (
-          <Text muted>Queries from this panel and from agents appear here with their rows.</Text>
+          <Text muted>{t.activityEmpty}</Text>
         ) : (
-          <List label="Queries">
+          <List label={t.queries}>
             {entries.slice(0, 50).map((entry) => (
               <ListItem
                 key={entry.id}
                 title={entry.sql.length > 80 ? `${entry.sql.slice(0, 80)}…` : entry.sql}
-                description={`${entry.source === 'agent' ? (entry.agent ?? 'agent') : 'panel'} · ${entry.connectionName}${entry.environment ? ` (${entry.environment})` : ''} · ${entry.status === 'ok' ? `${entry.rowCount} rows` : entry.status} · ${entry.durationMs} ms`}
+                description={`${entry.source === 'agent' ? (entry.agent ?? t.agent) : t.panel} · ${entry.connectionName}${entry.environment ? ` (${entry.environment})` : ''} · ${entry.status === 'ok' ? `${entry.rowCount} ${t.rows}` : statusLabel(entry)} · ${entry.durationMs} ms`}
                 icon={entry.dangerous ? 'warning' : entry.kind === 'write' ? 'edit' : 'search'}
                 current={entry.id === selected}
                 onPress={() => void showLogEntry(entry)}
               >
                 <Row gap="xs" wrap>
-                  {entry.dangerous ? <Badge tone="danger">DANGEROUS</Badge> : null}
-                  <Badge tone={statusTone(entry)}>{entry.kind}</Badge>
-                  {entry.status !== 'ok' ? <Badge tone="danger">{entry.status}</Badge> : null}
-                  {entry.approval === 'approved' ? <Badge tone="accent">approved</Badge> : null}
+                  {entry.dangerous ? <Badge tone="danger">{t.dangerousUpper}</Badge> : null}
+                  <Badge tone={statusTone(entry)}>{entry.kind === 'write' ? t.kindWrite : t.kindRead}</Badge>
+                  {entry.status !== 'ok' ? <Badge tone="danger">{statusLabel(entry)}</Badge> : null}
+                  {entry.approval === 'approved' ? <Badge tone="accent">{t.approved}</Badge> : null}
                   <Text muted size="xs">
                     <RelativeTime at={entry.at} />
                   </Text>
@@ -549,15 +609,19 @@ function ActivityLog() {
         )}
         {current ? (
           <Stack gap="xs">
-            <CodeView code={current.sql} language="sql" label="SQL" maxHeight="sm" />
+            <CodeView code={current.sql} language="sql" label={t.sql} maxHeight="sm" />
             {current.error ? <Callout tone="danger">{current.error}</Callout> : null}
-            {current.status === 'ok' && !current.hasResult ? <Text muted size="xs">Rows are no longer held by the worker.</Text> : null}
-            <ResultView answer={read(logResult)} label="Logged result" />
+            {current.status === 'ok' && !current.hasResult ? (
+              <Text muted size="xs">
+                {t.rowsGone}
+              </Text>
+            ) : null}
+            <ResultView answer={read(logResult)} label={t.loggedResult} />
           </Stack>
         ) : null}
         <Row justify="end">
           <Button variant="ghost" icon="delete" onPress={() => void clearLog()} disabled={entries.length === 0}>
-            Clear log
+            {t.clearLog}
           </Button>
         </Row>
       </Stack>
@@ -566,6 +630,7 @@ function ActivityLog() {
 }
 
 export default function Panel() {
+  const t = strings()
   const list = read(connections)
   const selected = read(selectedId)
   const current = selectedConnection()
@@ -575,24 +640,24 @@ export default function Panel() {
   const failure = read(queryError)
   const dangerous = read(draftDangerous)
   const awsCredentials = read(draftCredentialSource) === 'aws-secrets-manager'
+  const credentialOptions = [
+    { value: 'password', label: t.credentialPassword },
+    { value: 'aws-secrets-manager', label: t.credentialAws }
+  ]
   return (
     <Stack gap="md">
       <Row justify="between">
-        <Heading>Connections</Heading>
-        <Badge tone={list.length > 0 ? 'accent' : 'neutral'}>{list.length} saved</Badge>
+        <Heading>{t.connections}</Heading>
+        <Badge tone={list.length > 0 ? 'accent' : 'neutral'}>{t.saved(list.length)}</Badge>
       </Row>
 
       <Approvals />
       <GatewaySection />
 
       {list.length === 0 ? (
-        <EmptyState
-          title="No connections yet"
-          description="Fill in the form below and press Save."
-          icon="database"
-        />
+        <EmptyState title={t.noConnectionsTitle} description={t.noConnectionsBody} icon="database" />
       ) : (
-        <List label="Saved connections">
+        <List label={t.savedConnections}>
           {list.map((connection) => (
             <ListItem
               key={connection.id}
@@ -604,13 +669,13 @@ export default function Panel() {
             >
               <Row gap="xs" wrap>
                 {connection.environment ? <Badge tone={connection.dangerous ? 'danger' : 'accent'}>{connection.environment}</Badge> : null}
-                {connection.dangerous ? <Badge tone="danger">dangerous</Badge> : null}
+                {connection.dangerous ? <Badge tone="danger">{t.dangerous}</Badge> : null}
                 {connection.agent ? (
                   <Badge tone={connection.agentWrites === 'always' ? 'warning' : 'neutral'}>
-                    {connection.agentWrites === 'always' ? 'agents: write' : 'agents: ask'}
+                    {connection.agentWrites === 'always' ? t.agentsWrite : t.agentsAsk}
                   </Badge>
                 ) : (
-                  <Badge tone="neutral">hidden from agents</Badge>
+                  <Badge tone="neutral">{t.hiddenFromAgents}</Badge>
                 )}
               </Row>
             </ListItem>
@@ -619,89 +684,82 @@ export default function Panel() {
       )}
 
       <Row justify="between">
-        <Heading level={3}>{selected === null ? 'New connection' : 'Edit connection'}</Heading>
-        {current?.dangerous ? <Badge tone="danger">DANGEROUS</Badge> : null}
+        <Heading level={3}>{selected === null ? t.newConnection : t.editConnection}</Heading>
+        {current?.dangerous ? <Badge tone="danger">{t.dangerousUpper}</Badge> : null}
       </Row>
-      <Input label="Name" value={read(draftName)} onChange={(value) => set(draftName, value)} />
+      <Input label={t.name} value={read(draftName)} onChange={(value) => set(draftName, value)} />
       <Input
-        label="Environment label"
-        placeholder="local, dev, staging, prod…"
+        label={t.environmentLabel}
+        placeholder={t.environmentPlaceholder}
         maxLength={32}
         value={read(draftEnvironment)}
         onChange={(value) => set(draftEnvironment, value)}
       />
-      <Select label="Driver" value={read(draftDriver)} options={DRIVER_OPTIONS} onChange={changeDriver} />
+      <Select label={t.driver} value={read(draftDriver)} options={DRIVER_OPTIONS} onChange={changeDriver} />
       {isSqlite ? null : (
         <Select
-          label="Credentials"
+          label={t.credentials}
           value={read(draftCredentialSource)}
-          options={CREDENTIAL_OPTIONS}
+          options={credentialOptions}
           onChange={(value) => set(draftCredentialSource, value === 'aws-secrets-manager' ? 'aws-secrets-manager' : 'password')}
         />
       )}
       {isSqlite || awsCredentials ? null : (
         <Row gap="xs">
-          <Input label="Host" value={read(draftHost)} onChange={(value) => set(draftHost, value)} />
-          <Input label="Port" value={read(draftPort)} onChange={(value) => set(draftPort, value)} />
+          <Input label={t.host} value={read(draftHost)} onChange={(value) => set(draftHost, value)} />
+          <Input label={t.port} value={read(draftPort)} onChange={(value) => set(draftPort, value)} />
         </Row>
       )}
       {!isSqlite && awsCredentials ? null : (
         <Input
-          label={isSqlite ? 'Database file' : 'Database'}
+          label={isSqlite ? t.databaseFile : t.database}
           placeholder={isSqlite ? '~/data/app.db' : ''}
           value={read(draftDatabase)}
           onChange={(value) => set(draftDatabase, value)}
         />
       )}
-      {isSqlite || awsCredentials ? null : <Input label="User" value={read(draftUser)} onChange={(value) => set(draftUser, value)} />}
+      {isSqlite || awsCredentials ? null : <Input label={t.user} value={read(draftUser)} onChange={(value) => set(draftUser, value)} />}
       {isSqlite || awsCredentials ? null : (
         <Input
-          label="Password"
+          label={t.password}
           type="password"
           value={read(draftPassword)}
-          placeholder={selected === null ? '' : 'Leave empty to keep the stored password'}
+          placeholder={selected === null ? '' : t.passwordKeep}
           onChange={(value) => set(draftPassword, value)}
         />
       )}
       {isSqlite || !awsCredentials ? null : (
         <Stack gap="xs">
           <Input
-            label="AWS secret name or ARN"
-            placeholder="prod/app/db or arn:aws:secretsmanager:…"
+            label={t.awsSecretId}
+            placeholder={t.awsSecretPlaceholder}
             value={read(draftAwsSecretId)}
             onChange={(value) => set(draftAwsSecretId, value)}
           />
           <Row gap="xs">
-            <Input label="AWS region" placeholder="Empty: AWS_REGION or the profile" value={read(draftAwsRegion)} onChange={(value) => set(draftAwsRegion, value)} />
-            <Input label="AWS profile" placeholder="Empty: AWS_PROFILE or default" value={read(draftAwsProfile)} onChange={(value) => set(draftAwsProfile, value)} />
+            <Input label={t.awsRegion} placeholder={t.awsRegionPlaceholder} value={read(draftAwsRegion)} onChange={(value) => set(draftAwsRegion, value)} />
+            <Input label={t.awsProfile} placeholder={t.awsProfilePlaceholder} value={read(draftAwsProfile)} onChange={(value) => set(draftAwsProfile, value)} />
           </Row>
           <Text muted size="xs">
-            Host, port, user, database and password all come from the secret (the RDS format: host, port,
-            username, dbname, password). AWS credentials come from AWS_ACCESS_KEY_ID, ~/.aws/credentials or
-            credential_process, else from the installed AWS CLI (SSO and roles). The value is cached in the
-            worker for 5 minutes and never shown.
+            {t.awsHelp}
           </Text>
         </Stack>
       )}
       <Checkbox
-        label="Dangerous environment"
-        description="Every write is confirmed by you, agent writes always ask, and its queries are highlighted."
+        label={t.dangerousEnvironment}
+        description={t.dangerousEnvironmentHelp}
         checked={dangerous}
         onChange={(checked) => set(draftDangerous, checked)}
       />
       <Checkbox
-        label="Expose to agents"
-        description="Agents launched from Orca may list, describe and query this connection."
+        label={t.exposeToAgents}
+        description={t.exposeToAgentsHelp}
         checked={read(draftAgent)}
         onChange={(checked) => set(draftAgent, checked)}
       />
       <Checkbox
-        label="Always allow agent writes"
-        description={
-          dangerous
-            ? 'Ignored on a dangerous environment: agent writes always wait for your approval.'
-            : 'Off: each agent write waits for your approval here. On: agent writes run at once (Agent access must be "Read and write").'
-        }
+        label={t.alwaysAllowWrites}
+        description={dangerous ? t.alwaysAllowWritesDangerous : t.alwaysAllowWritesHelp}
         checked={read(draftAgentWritesAlways)}
         disabled={!read(draftAgent) || dangerous}
         onChange={(checked) => set(draftAgentWritesAlways, checked)}
@@ -709,31 +767,35 @@ export default function Panel() {
 
       <Row gap="xs" wrap>
         <Button icon="check" onPress={() => void save()} disabled={working}>
-          Save
+          {t.save}
         </Button>
         <Button variant="outline" icon="play" onPress={() => void test()} disabled={working || selected === null}>
-          Test
+          {t.test}
         </Button>
         <Button variant="ghost" tone="danger" icon="delete" onPress={() => void remove()} disabled={working || selected === null}>
-          Remove
+          {t.remove}
         </Button>
         <Button variant="ghost" icon="add" onPress={clearDraft} disabled={working || selected === null}>
-          New
+          {t.new}
         </Button>
-        {working ? <Spinner label="Working" /> : null}
+        {working ? <Spinner label={t.working} /> : null}
       </Row>
       {message ? <Callout tone={message.tone}>{message.text}</Callout> : null}
 
       {current === null ? null : (
         <Stack gap="sm">
           <Row justify="between">
-            <Heading level={3}>Query</Heading>
-            {current.dangerous ? <Badge tone="danger">{current.environment || 'dangerous'}</Badge> : current.environment ? <Badge tone="accent">{current.environment}</Badge> : null}
+            <Heading level={3}>{t.query}</Heading>
+            {current.dangerous ? (
+              <Badge tone="danger">{current.environment || t.dangerous}</Badge>
+            ) : current.environment ? (
+              <Badge tone="accent">{current.environment}</Badge>
+            ) : null}
           </Row>
           <Textarea
-            label="SQL"
+            label={t.sql}
             labelHidden
-            placeholder="SELECT * FROM … (Cmd/Ctrl+Enter runs it)"
+            placeholder={t.sqlPlaceholder}
             rows={4}
             value={read(sql)}
             onChange={(value) => {
@@ -745,14 +807,14 @@ export default function Panel() {
           <Row gap="xs" wrap justify="between">
             <Row gap="xs">
               <Button icon="play" onPress={() => void runQuery()} disabled={working || read(sql).trim() === ''}>
-                Run
+                {t.run}
               </Button>
               <Button variant="outline" icon="search" onPress={() => void loadSchema()} disabled={working}>
-                Schema
+                {t.schema}
               </Button>
             </Row>
             <Checkbox
-              label="Allow writes"
+              label={t.allowWrites}
               checked={read(allowWrites)}
               onChange={(checked) => {
                 set(allowWrites, checked)
@@ -761,22 +823,22 @@ export default function Panel() {
             />
           </Row>
           {read(pendingDangerousWrite) ? (
-            <Callout tone="danger" title={`${current.name} is a dangerous environment`}>
+            <Callout tone="danger" title={t.dangerousTitle(current.name)}>
               <Stack gap="xs">
-                <Text>Writes are allowed and this runs inside a transaction. Run it there anyway?</Text>
+                <Text>{t.dangerousBody}</Text>
                 <Row gap="xs">
                   <Button tone="danger" icon="warning" onPress={() => void runQuery(true)} disabled={working}>
-                    Run on {current.environment || 'dangerous environment'}
+                    {t.runOn(current.environment || t.dangerousDefault)}
                   </Button>
                   <Button variant="ghost" onPress={() => set(pendingDangerousWrite, false)}>
-                    Cancel
+                    {t.cancel}
                   </Button>
                 </Row>
               </Stack>
             </Callout>
           ) : null}
           {failure ? <Callout tone="danger">{failure}</Callout> : null}
-          <ResultView answer={read(result)} label="Query result" />
+          <ResultView answer={read(result)} label={t.queryResult} />
           <SchemaTree />
         </Stack>
       )}
@@ -784,7 +846,7 @@ export default function Panel() {
       <ActivityLog />
 
       <Text muted size="xs">
-        Passwords are kept in Orca's encrypted secrets store and never leave this machine.
+        {t.footer}
       </Text>
     </Stack>
   )

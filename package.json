@@ -1,12 +1,12 @@
 {
   "name": "orca-db-connector",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "description": "Orca plugin: PostgreSQL, MySQL and SQLite connections, schema browsing and queries from a sidebar panel, plus a local gateway and MCP server for the agents Orca launches.",
   "type": "module",
   "scripts": {
     "check:manifest": "node scripts/check-manifest.mjs",
-    "test:node": "node --test src/sql/classify.test.ts src/drivers/sqlite.test.ts src/drivers/bundles.test.ts src/agent/launch-hook.test.ts src/aws/sigv4.test.ts src/aws/secrets-manager.test.ts src/db/service.test.ts src/approvals/queue.test.ts src/log/query-log.test.ts src/gateway/gateway.test.ts src/worker-activate.test.ts build/test/iconv-shim.test.mjs mcp/orca-db-mcp.test.mjs",
+    "test:node": "node --test src/sql/classify.test.ts src/drivers/sqlite.test.ts src/drivers/bundles.test.ts src/agent/launch-hook.test.ts src/agent/connect-text.test.ts src/aws/sigv4.test.ts src/aws/secrets-manager.test.ts src/db/service.test.ts src/approvals/queue.test.ts src/log/query-log.test.ts src/gateway/gateway.test.ts src/worker-activate.test.ts build/test/iconv-shim.test.mjs mcp/orca-db-mcp.test.mjs",
     "build:vendor": "cd build && npm ci --ignore-scripts && node build.mjs",
     "typecheck": "tsc -p .",
     "test": "orca plugin test .",

@@ -52,6 +52,8 @@ requested capability is explained and used").
 | `secrets:own` | Passwords in the OS-keyring-backed encrypted store (`secrets.set` fails when `secrets.protection` is `unavailable`) |
 | `settings:own` | The settings declared in `contributes.settings`, edited in Orca's Settings |
 | `notifications:show` | A desktop notification when an agent write waits for approval |
+| `agent:read` | List the agents in the focused workspace (the Connect button) |
+| `terminal:send` | Type the gateway details into a running agent's terminal |
 
 Also available: `notifications:show`, `workspace:read`/`workspace:write`, `terminal:send`/
 `terminal:read`, `agent:read`/`agent:launch`, `appearance:write`.
@@ -222,7 +224,7 @@ existence without Orca; it does not replace Orca's validator. CI
 1. `orca plugin validate .` passes; the plugin is committed and pushed to the public GitHub
    repository of the owner (`maximinhan`).
 2. Bump `version` in `orca-plugin.json`, commit, then tag that commit: `git tag -a v0.2.0 -m
-   v0.4.0 && git push origin v0.4.0` (`vX.Y.Z`).
+   v0.5.0 && git push origin v0.5.0` (`vX.Y.Z`).
 3. Add the `orca-plugin` topic: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`.
 4. Check the listing at https://www.onorca.dev/plugins/maximinhan/orca-db-connector.
 

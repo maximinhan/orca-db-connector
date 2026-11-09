@@ -6,17 +6,18 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
+import { agentConnectText } from './agent/connect-text.ts'
 import { claudeMcpConfig, decorateAgentLaunch, type AgentLaunchEvent } from './agent/launch-hook.ts'
 import { ApprovalQueue } from './approvals/queue.ts'
 import { SecretsManager } from './aws/secrets-manager.ts'
 import { ConnectionStore, validateConnection } from './connections.ts'
 import { DbService, DEFAULT_SETTINGS, type DbServiceSettings } from './db/service.ts'
-import { errorMessage } from './errors.ts'
+import { errorMessage, hostError } from './errors.ts'
 import { startGateway, type Gateway } from './gateway/server.ts'
 import { QueryLog } from './log/query-log.ts'
-import type { AgentAccess, GatewayStatus } from './protocol.ts'
+import type { AgentAccess, GatewayStatus, RunningAgent } from './protocol.ts'
 
-const VERSION = '0.4.1'
+const VERSION = '0.5.0'
 const AGENT_ACCESS_VALUES: readonly AgentAccess[] = ['off', 'read-only', 'read-write']
 const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 
@@ -67,6 +68,9 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
     })
   })
 
+  // The panel reports Orca's UI language; until then notifications are English.
+  let korean = false
+
   const queue = new ApprovalQueue({
     get timeoutMs() {
       return settings.approvalTimeoutMs
@@ -77,11 +81,21 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
         return
       }
       const where = request.environment ? `${request.connectionName} (${request.environment})` : request.connectionName
+      const agent = request.agent ?? (korean ? '에이전트' : 'An agent')
+      const sql = request.sql.slice(0, 120)
       void orca.host
-        .call('notifications.show', {
-          title: `${request.agent ?? 'An agent'} wants to write to ${where}`,
-          body: `${request.dangerous ? 'DANGEROUS environment. ' : ''}Open the DB Connector panel to approve or refuse: ${request.sql.slice(0, 120)}`
-        })
+        .call(
+          'notifications.show',
+          korean
+            ? {
+                title: `${agent}이(가) ${where}에 쓰기를 요청합니다`,
+                body: `${request.dangerous ? '위험 환경입니다. ' : ''}DB Connector 패널에서 승인하거나 거부하세요: ${sql}`
+              }
+            : {
+                title: `${agent} wants to write to ${where}`,
+                body: `${request.dangerous ? 'DANGEROUS environment. ' : ''}Open the DB Connector panel to approve or refuse: ${sql}`
+              }
+        )
         .catch((error: unknown) => orca.log(`notification failed: ${errorMessage(error)}`))
     }
   })
@@ -144,6 +158,42 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   orca.panels.handle('log.list', async () => ({ entries: queryLog.list() }))
   orca.panels.handle('log.result', async ({ id }) => ({ result: queryLog.result(id) }))
   orca.panels.handle('log.clear', async () => ({ cleared: queryLog.clear() }))
+  orca.panels.handle('ui.hello', async ({ locale }) => {
+    korean = typeof locale === 'string' && /^ko(?:[-_]|$)/i.test(locale)
+    return { ok: true as const }
+  })
+
+  // Agents already running when the plugin (or this worker) started: list them, and type the
+  // gateway details into one so it can use curl right away.
+  const listAgents = async (): Promise<RunningAgent[]> => {
+    if (!orca.host.has('agents.list')) {
+      return []
+    }
+    const answer = (await orca.host.call('agents.list')) as { agents?: { terminalId: string | null; title: string | null; agent: string | null; state: RunningAgent['state'] }[] }
+    return (answer.agents ?? [])
+      .filter((agent) => typeof agent.terminalId === 'string')
+      .map((agent) => ({ terminalId: agent.terminalId as string, title: agent.title ?? agent.agent ?? agent.terminalId as string, agent: agent.agent, state: agent.state }))
+  }
+  orca.panels.handle('agents.list', async () => ({ agents: await listAgents() }))
+  orca.panels.handle('agents.connect', async ({ terminalId }) => {
+    if (gateway === null || settings.agentAccess === 'off') {
+      throw hostError('not_permitted', korean ? '에이전트 접근이 꺼져 있거나 게이트웨이가 실행되지 않았습니다' : 'agent access is off or the gateway is not running')
+    }
+    if (typeof terminalId !== 'string' || terminalId === '') {
+      throw hostError('invalid_params', 'terminalId is required')
+    }
+    const target = (await listAgents()).find((agent) => agent.terminalId === terminalId) ?? null
+    const text = agentConnectText({
+      gatewayUrl: gateway.url,
+      token: gateway.token,
+      mcpServerPath: MCP_SERVER_PATH,
+      agent: target?.agent ?? null,
+      access: settings.agentAccess
+    })
+    const answer = (await orca.host.call('terminal.sendText', { terminalId, text, enter: true })) as { accepted?: boolean }
+    orca.log(`gateway details sent to terminal ${terminalId} (${target?.agent ?? 'unknown agent'})`)
+    return { sent: answer.accepted !== false }
+  })
 
   // The agent gateway: loopback HTTP with a per-start token.
   try {

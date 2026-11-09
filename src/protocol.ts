@@ -111,6 +111,15 @@ export type ApprovalRequest = {
 
 export type QueryLogStatus = 'ok' | 'error' | 'denied' | 'timeout'
 
+/** An agent running in the focused workspace, from Orca's `agents.list`. */
+export type RunningAgent = {
+  terminalId: string
+  title: string
+  /** Orca's agent id (`claude`, `codex`, ...) or null when unknown. */
+  agent: string | null
+  state: 'working' | 'blocked' | 'waiting' | 'done'
+}
+
 export type QueryLogEntry = {
   id: string
   at: number
@@ -169,6 +178,12 @@ declare module 'orca' {
     'log.result': { input: { id: string }; output: { result: QueryResult | null } }
     /** Forgets every logged query and its rows. */
     'log.clear': { output: { cleared: number } }
+    /** Tells the worker Orca's UI language, for notifications. */
+    'ui.hello': { input: { locale: string }; output: { ok: true } }
+    /** Agents running in the focused workspace. */
+    'agents.list': { output: { agents: RunningAgent[] } }
+    /** Types the gateway address, token and usage into a running agent's terminal. */
+    'agents.connect': { input: { terminalId: string }; output: { sent: boolean } }
   }
   // oxlint-disable-next-line typescript/consistent-type-definitions -- declaration merging needs an interface
   interface PluginPanelEvents {

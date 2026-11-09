@@ -27,6 +27,11 @@ The install key is `maximinhan.db-connector` (Orca names the publisher after the
 - **Drivers**: SQLite through Node's built-in `node:sqlite`; PostgreSQL (`pg`) and MySQL
   (`mysql2`) bundled into `vendor/` by `build/build.mjs`, because an installed plugin cannot carry
   `node_modules`.
+- **Running agents**: an agent started before the plugin was enabled gets no environment from
+  the hook, so the panel lists the agents in the focused workspace and **Connect** types the
+  gateway address, token and curl usage into that agent's terminal. The MCP tools themselves
+  need the agent restarted from Orca.
+- **Language**: the panel and notifications follow Orca's UI language, Korean or English.
 - **Credentials**: a password kept in Orca's encrypted secrets, or an **AWS Secrets Manager**
   secret in the RDS format, which then supplies host, port, username, dbname and password (the
   form hides those fields). AWS credentials come from the environment, `~/.aws/credentials` or
@@ -37,7 +42,7 @@ The install key is `maximinhan.db-connector` (Orca names the publisher after the
 
 | Path | Role |
 | --- | --- |
-| `orca-plugin.json` | Manifest (format 2): `trusted-worker`, one panel, one hook, five settings, four capabilities |
+| `orca-plugin.json` | Manifest (format 2): `trusted-worker`, one panel, one hook, five settings, six capabilities |
 | `src/worker.ts` | Worker entry (`main`): panel requests, the gateway, the launch hook |
 | `src/panel.tsx` | The sidebar panel (components UI, no build step) |
 | `src/protocol.ts` | Panel ↔ worker contract, type-checked on both sides |
@@ -50,6 +55,8 @@ The install key is `maximinhan.db-connector` (Orca names the publisher after the
 | `src/drivers/` | `sqlite.ts`, `postgres.ts`, `mysql.ts` and the lazy registry |
 | `src/gateway/` | The loopback HTTP API agents call |
 | `src/agent/launch-hook.ts` | What `agent.launch.before` adds to an agent's command and environment |
+| `src/agent/connect-text.ts` | What **Connect** types into a running agent's terminal |
+| `src/i18n.ts` | Panel copy in English and Korean, chosen by Orca's UI language |
 | `mcp/orca-db-mcp.mjs` | The stdio MCP server agents run (plain Node, no dependencies) |
 | `build/` → `vendor/` | Driver bundles and their licences (`THIRD_PARTY_NOTICES.txt`) |
 | `docs/` | [Plugin development procedure](docs/orca-plugin-development.md), [agent access](docs/agent-access.md) |
@@ -96,7 +103,7 @@ to re-run.
 
 1. `orca plugin validate .` passes; commit and push.
 2. Bump `version` in `orca-plugin.json`, commit, tag and push the tag:
-   `git tag -a v0.4.0 -m v0.4.0 && git push origin v0.4.0`
+   `git tag -a v0.5.0 -m v0.5.0 && git push origin v0.5.0`
 3. Add the topic: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`
 4. Check https://www.onorca.dev/plugins/maximinhan/orca-db-connector
 
