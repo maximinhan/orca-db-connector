@@ -462,7 +462,7 @@ function GatewaySection() {
     )
   }
   const message = read(setupNote)
-  const manual = `claude mcp add --scope user --env ELECTRON_RUN_AS_NODE=1 orca-db -- node "${status.mcpServerPath}"`
+  const manual = `claude mcp add --scope user --transport stdio orca-db -- node "${status.mcpServerPath}"`
   const others = [
     `# Codex CLI`,
     `codex mcp add orca-db -- node "${status.mcpServerPath}"`,

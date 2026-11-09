@@ -8,7 +8,7 @@ import { claudeMcpAddCommand, findClaudeCli, registerClaudeMcpServer } from './c
 test('prints the command to run by hand', () => {
   assert.equal(
     claudeMcpAddCommand({ mcpServerPath: '/Users/me/My Plugins/db/mcp/orca-db-mcp.mjs', execPath: '/usr/local/bin/node' }),
-    'claude mcp add --scope user --env ELECTRON_RUN_AS_NODE=1 orca-db -- /usr/local/bin/node "/Users/me/My Plugins/db/mcp/orca-db-mcp.mjs"'
+    'claude mcp add --scope user --transport stdio orca-db --env ELECTRON_RUN_AS_NODE=1 -- /usr/local/bin/node "/Users/me/My Plugins/db/mcp/orca-db-mcp.mjs"'
   )
 })
 
@@ -25,7 +25,7 @@ test('runs the claude CLI when found, and explains when it is not', async () => 
     const result = await registerClaudeMcpServer({ mcpServerPath: '/p/mcp.mjs', execPath: '/n/node', env, home })
     assert.equal(result.ok, true)
     assert.match(result.message, /Added stdio MCP server orca-db/)
-    assert.equal(readFileSync(path.join(bin, 'args'), 'utf8').trim(), 'mcp add --scope user --env ELECTRON_RUN_AS_NODE=1 orca-db -- /n/node /p/mcp.mjs')
+    assert.equal(readFileSync(path.join(bin, 'args'), 'utf8').trim(), 'mcp add --scope user --transport stdio orca-db --env ELECTRON_RUN_AS_NODE=1 -- /n/node /p/mcp.mjs')
 
     writeFileSync(cli, `#!/bin/sh\necho "MCP server orca-db already exists in user config" >&2\nexit 1\n`)
     const again = await registerClaudeMcpServer({ mcpServerPath: '/p/mcp.mjs', execPath: '/n/node', env, home })

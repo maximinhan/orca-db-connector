@@ -110,7 +110,7 @@ pieces cover those:
   gateway, and re-reads it once after a `401`, so a worker restart that changed the token is
   followed without any reconfiguration.
 - **User-scope registration.** **Register in Claude Code** in the panel runs
-  `claude mcp add --scope user --env ELECTRON_RUN_AS_NODE=1 orca-db -- <orca binary> <mcp server>`,
+  `claude mcp add --scope user --transport stdio orca-db --env ELECTRON_RUN_AS_NODE=1 -- <orca binary> <mcp server>`,
   which puts the server in Claude Code's user settings: every Claude Code on the machine loads it,
   however it was started. The same command is printed for running by hand when the `claude` CLI is
   not on the worker's PATH.

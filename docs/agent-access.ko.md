@@ -99,7 +99,7 @@ MCP 서버의 `instructions` 가 이 순서로 호출하고, 쓰기 전에 무�
   URL 과 토큰을 유지합니다. MCP 서버는 환경에 게이트웨이가 없으면 이 파일을 읽고, `401` 을 받으면 한 번 다시
   읽으므로 워커 재시작으로 토큰이 바뀌어도 설정을 바꿀 필요가 없습니다.
 - **사용자 범위 등록.** 패널의 **Claude Code에 등록** 버튼이
-  `claude mcp add --scope user --env ELECTRON_RUN_AS_NODE=1 orca-db -- <orca 바이너리> <mcp 서버>` 를 실행해
+  `claude mcp add --scope user --transport stdio orca-db --env ELECTRON_RUN_AS_NODE=1 -- <orca 바이너리> <mcp 서버>` 를 실행해
   서버를 Claude Code 사용자 설정에 넣습니다. 이 컴퓨터의 모든 Claude Code 가 어떻게 시작했든 이 서버를 로드합니다.
   워커의 PATH 에서 `claude` CLI 를 찾지 못하면 같은 명령을 직접 실행하라고 보여 줍니다.
 

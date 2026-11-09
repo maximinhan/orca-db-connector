@@ -20,7 +20,8 @@ export type ClaudeSetupInput = {
 
 /** The `claude mcp add` arguments, shared by the command we run and the one we print. */
 export function claudeMcpAddArgs(input: Pick<ClaudeSetupInput, 'mcpServerPath' | 'execPath'>): string[] {
-  return ['mcp', 'add', '--scope', 'user', '--env', 'ELECTRON_RUN_AS_NODE=1', MCP_SERVER_NAME, '--', input.execPath, input.mcpServerPath]
+  // `--env` is variadic and would swallow the server name, so the name comes first and `--` ends the option.
+  return ['mcp', 'add', '--scope', 'user', '--transport', 'stdio', MCP_SERVER_NAME, '--env', 'ELECTRON_RUN_AS_NODE=1', '--', input.execPath, input.mcpServerPath]
 }
 
 function quote(value: string): string {

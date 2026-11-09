@@ -9,7 +9,7 @@ import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { pathToFileURL } from 'node:url'
 
-export const SERVER_INFO = { name: 'orca-db-connector', version: '0.6.1' }
+export const SERVER_INFO = { name: 'orca-db-connector', version: '0.6.2' }
 const PROTOCOL_VERSION = '2025-06-18'
 
 export const TOOLS = [
