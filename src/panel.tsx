@@ -57,6 +57,8 @@ const connections = atom<DbConnection[]>([])
 const selectedId = atom<string | null>('selectedId', null, { persist: 'plugin' })
 const note = atom<Note | null>(null)
 const busy = atom(false)
+/** The connection form shows only while creating or editing (or when nothing is saved yet). */
+const formOpen = atom('formOpen', false)
 const gateway = atom<GatewayStatus | null>(null)
 const approvals = atom<ApprovalRequest[]>([])
 const setupNote = atom<Note | null>(null)
@@ -140,6 +142,7 @@ async function refreshLog(): Promise<void> {
 }
 
 function clearDraft(): void {
+  set(formOpen, true)
   set(selectedId, null)
   set(draftName, '')
   set(draftDriver, 'postgres')
@@ -164,6 +167,7 @@ function clearDraft(): void {
 }
 
 function select(connection: DbConnection): void {
+  set(formOpen, false)
   set(selectedId, connection.id)
   set(draftName, connection.name)
   set(draftDriver, connection.driver)
@@ -238,6 +242,7 @@ async function save(): Promise<void> {
     })
     set(selectedId, connection.id)
     set(draftPassword, '')
+    set(formOpen, false)
     set(note, { tone: 'success', text: t.savedNote(connection.name) })
     await refresh()
   } catch (error) {
@@ -273,6 +278,7 @@ async function remove(): Promise<void> {
   try {
     await plugin.request('connections.remove', { id })
     clearDraft()
+    set(formOpen, false)
     set(note, { tone: 'neutral', text: strings().removed })
     await refresh()
   } catch (error) {
@@ -636,6 +642,7 @@ export default function Panel() {
   const failure = read(queryError)
   const dangerous = read(draftDangerous)
   const awsCredentials = read(draftCredentialSource) === 'aws-secrets-manager'
+  const showForm = read(formOpen) || list.length === 0
   const credentialOptions = [
     { value: 'password', label: t.credentialPassword },
     { value: 'aws-secrets-manager', label: t.credentialAws }
@@ -643,8 +650,13 @@ export default function Panel() {
   return (
     <Stack gap="md">
       <Row justify="between">
-        <Heading>{t.connections}</Heading>
-        <Badge tone={list.length > 0 ? 'accent' : 'neutral'}>{t.saved(list.length)}</Badge>
+        <Row gap="xs">
+          <Heading>{t.connections}</Heading>
+          <Badge tone={list.length > 0 ? 'accent' : 'neutral'}>{t.saved(list.length)}</Badge>
+        </Row>
+        <Button variant="outline" icon="add" onPress={clearDraft} disabled={working}>
+          {t.new}
+        </Button>
       </Row>
 
       <Approvals />
@@ -679,115 +691,140 @@ export default function Panel() {
         </List>
       )}
 
-      <Row justify="between">
-        <Heading level={3}>{selected === null ? t.newConnection : t.editConnection}</Heading>
-        {current?.dangerous ? <Badge tone="danger">{t.dangerousUpper}</Badge> : null}
-      </Row>
-      <Input label={t.name} value={read(draftName)} onChange={(value) => set(draftName, value)} />
-      <Input
-        label={t.environmentLabel}
-        placeholder={t.environmentPlaceholder}
-        maxLength={32}
-        value={read(draftEnvironment)}
-        onChange={(value) => set(draftEnvironment, value)}
-      />
-      <Select label={t.driver} value={read(draftDriver)} options={DRIVER_OPTIONS} onChange={changeDriver} />
-      {isSqlite ? null : (
-        <Select
-          label={t.credentials}
-          value={read(draftCredentialSource)}
-          options={credentialOptions}
-          onChange={(value) => set(draftCredentialSource, value === 'aws-secrets-manager' ? 'aws-secrets-manager' : 'password')}
-        />
-      )}
-      {isSqlite || awsCredentials ? null : (
-        <Row gap="xs">
-          <Input label={t.host} value={read(draftHost)} onChange={(value) => set(draftHost, value)} />
-          <Input label={t.port} value={read(draftPort)} onChange={(value) => set(draftPort, value)} />
+      {showForm ? (
+        <Stack gap="md">
+        <Row justify="between">
+          <Heading level={3}>{selected === null ? t.newConnection : t.editConnection}</Heading>
+          {current?.dangerous ? <Badge tone="danger">{t.dangerousUpper}</Badge> : null}
         </Row>
-      )}
-      {!isSqlite && awsCredentials ? null : (
+        <Input label={t.name} value={read(draftName)} onChange={(value) => set(draftName, value)} />
         <Input
-          label={isSqlite ? t.databaseFile : t.database}
-          placeholder={isSqlite ? '~/data/app.db' : ''}
-          value={read(draftDatabase)}
-          onChange={(value) => set(draftDatabase, value)}
+          label={t.environmentLabel}
+          placeholder={t.environmentPlaceholder}
+          maxLength={32}
+          value={read(draftEnvironment)}
+          onChange={(value) => set(draftEnvironment, value)}
         />
-      )}
-      {isSqlite || awsCredentials ? null : <Input label={t.user} value={read(draftUser)} onChange={(value) => set(draftUser, value)} />}
-      {isSqlite || awsCredentials ? null : (
-        <Input
-          label={t.password}
-          type="password"
-          value={read(draftPassword)}
-          placeholder={selected === null ? '' : t.passwordKeep}
-          onChange={(value) => set(draftPassword, value)}
-        />
-      )}
-      {isSqlite || !awsCredentials ? null : (
-        <Stack gap="xs">
-          <Input
-            label={t.awsSecretId}
-            placeholder={t.awsSecretPlaceholder}
-            value={read(draftAwsSecretId)}
-            onChange={(value) => set(draftAwsSecretId, value)}
+        <Select label={t.driver} value={read(draftDriver)} options={DRIVER_OPTIONS} onChange={changeDriver} />
+        {isSqlite ? null : (
+          <Select
+            label={t.credentials}
+            value={read(draftCredentialSource)}
+            options={credentialOptions}
+            onChange={(value) => set(draftCredentialSource, value === 'aws-secrets-manager' ? 'aws-secrets-manager' : 'password')}
           />
+        )}
+        {isSqlite || awsCredentials ? null : (
           <Row gap="xs">
-            <Input label={t.awsRegion} placeholder={t.awsRegionPlaceholder} value={read(draftAwsRegion)} onChange={(value) => set(draftAwsRegion, value)} />
-            <Input label={t.awsProfile} placeholder={t.awsProfilePlaceholder} value={read(draftAwsProfile)} onChange={(value) => set(draftAwsProfile, value)} />
+            <Input label={t.host} value={read(draftHost)} onChange={(value) => set(draftHost, value)} />
+            <Input label={t.port} value={read(draftPort)} onChange={(value) => set(draftPort, value)} />
           </Row>
-          <Text muted size="xs">
-            {t.awsHelp}
-          </Text>
-        </Stack>
-      )}
-      <Checkbox
-        label={t.dangerousEnvironment}
-        description={t.dangerousEnvironmentHelp}
-        checked={dangerous}
-        onChange={(checked) => set(draftDangerous, checked)}
-      />
-      <Checkbox
-        label={t.exposeToAgents}
-        description={t.exposeToAgentsHelp}
-        checked={read(draftAgent)}
-        onChange={(checked) => set(draftAgent, checked)}
-      />
-      <Checkbox
-        label={t.alwaysAllowWrites}
-        description={dangerous ? t.alwaysAllowWritesDangerous : t.alwaysAllowWritesHelp}
-        checked={read(draftAgentWritesAlways)}
-        disabled={!read(draftAgent) || dangerous}
-        onChange={(checked) => set(draftAgentWritesAlways, checked)}
-      />
+        )}
+        {!isSqlite && awsCredentials ? null : (
+          <Input
+            label={isSqlite ? t.databaseFile : t.database}
+            placeholder={isSqlite ? '~/data/app.db' : ''}
+            value={read(draftDatabase)}
+            onChange={(value) => set(draftDatabase, value)}
+          />
+        )}
+        {isSqlite || awsCredentials ? null : <Input label={t.user} value={read(draftUser)} onChange={(value) => set(draftUser, value)} />}
+        {isSqlite || awsCredentials ? null : (
+          <Input
+            label={t.password}
+            type="password"
+            value={read(draftPassword)}
+            placeholder={selected === null ? '' : t.passwordKeep}
+            onChange={(value) => set(draftPassword, value)}
+          />
+        )}
+        {isSqlite || !awsCredentials ? null : (
+          <Stack gap="xs">
+            <Input
+              label={t.awsSecretId}
+              placeholder={t.awsSecretPlaceholder}
+              value={read(draftAwsSecretId)}
+              onChange={(value) => set(draftAwsSecretId, value)}
+            />
+            <Row gap="xs">
+              <Input label={t.awsRegion} placeholder={t.awsRegionPlaceholder} value={read(draftAwsRegion)} onChange={(value) => set(draftAwsRegion, value)} />
+              <Input label={t.awsProfile} placeholder={t.awsProfilePlaceholder} value={read(draftAwsProfile)} onChange={(value) => set(draftAwsProfile, value)} />
+            </Row>
+            <Text muted size="xs">
+              {t.awsHelp}
+            </Text>
+          </Stack>
+        )}
+        <Checkbox
+          label={t.dangerousEnvironment}
+          description={t.dangerousEnvironmentHelp}
+          checked={dangerous}
+          onChange={(checked) => set(draftDangerous, checked)}
+        />
+        <Checkbox
+          label={t.exposeToAgents}
+          description={t.exposeToAgentsHelp}
+          checked={read(draftAgent)}
+          onChange={(checked) => set(draftAgent, checked)}
+        />
+        <Checkbox
+          label={t.alwaysAllowWrites}
+          description={dangerous ? t.alwaysAllowWritesDangerous : t.alwaysAllowWritesHelp}
+          checked={read(draftAgentWritesAlways)}
+          disabled={!read(draftAgent) || dangerous}
+          onChange={(checked) => set(draftAgentWritesAlways, checked)}
+        />
 
-      <Row gap="xs" wrap>
-        <Button icon="check" onPress={() => void save()} disabled={working}>
-          {t.save}
-        </Button>
-        <Button variant="outline" icon="play" onPress={() => void test()} disabled={working || selected === null}>
-          {t.test}
-        </Button>
-        <Button variant="ghost" tone="danger" icon="delete" onPress={() => void remove()} disabled={working || selected === null}>
-          {t.remove}
-        </Button>
-        <Button variant="ghost" icon="add" onPress={clearDraft} disabled={working || selected === null}>
-          {t.new}
-        </Button>
-        {working ? <Spinner label={t.working} /> : null}
-      </Row>
-      {message ? <Callout tone={message.tone}>{message.text}</Callout> : null}
+        <Row gap="xs" wrap>
+          <Button icon="check" onPress={() => void save()} disabled={working}>
+            {t.save}
+          </Button>
+          {selected === null ? null : (
+            <Button variant="outline" icon="play" onPress={() => void test()} disabled={working}>
+              {t.test}
+            </Button>
+          )}
+          {selected === null ? null : (
+            <Button variant="ghost" tone="danger" icon="delete" onPress={() => void remove()} disabled={working}>
+              {t.remove}
+            </Button>
+          )}
+          {list.length === 0 ? null : (
+            <Button variant="ghost" icon="close" onPress={() => set(formOpen, false)} disabled={working}>
+              {t.cancel}
+            </Button>
+          )}
+          {working ? <Spinner label={t.working} /> : null}
+        </Row>
+        {message ? <Callout tone={message.tone}>{message.text}</Callout> : null}
+        </Stack>
+      ) : null}
 
       {current === null ? null : (
         <Stack gap="sm">
-          <Row justify="between">
-            <Heading level={3}>{t.query}</Heading>
-            {current.dangerous ? (
-              <Badge tone="danger">{current.environment || t.dangerous}</Badge>
-            ) : current.environment ? (
-              <Badge tone="accent">{current.environment}</Badge>
-            ) : null}
+          <Row justify="between" wrap>
+            <Row gap="xs">
+              <Heading level={3}>{current.name}</Heading>
+              {current.dangerous ? (
+                <Badge tone="danger">{current.environment || t.dangerous}</Badge>
+              ) : current.environment ? (
+                <Badge tone="accent">{current.environment}</Badge>
+              ) : null}
+            </Row>
+            {showForm ? null : (
+              <Row gap="xs">
+                <Button variant="ghost" icon="edit" onPress={() => set(formOpen, true)} disabled={working}>
+                  {t.edit}
+                </Button>
+                <Button variant="ghost" icon="play" onPress={() => void test()} disabled={working}>
+                  {t.test}
+                </Button>
+                {working ? <Spinner label={t.working} /> : null}
+              </Row>
+            )}
           </Row>
+          {showForm || message === null ? null : <Callout tone={message.tone}>{message.text}</Callout>}
+          <Heading level={3}>{t.query}</Heading>
           <Textarea
             label={t.sql}
             labelHidden

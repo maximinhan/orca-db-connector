@@ -18,7 +18,7 @@ import { startGateway, type Gateway } from './gateway/server.ts'
 import { QueryLog } from './log/query-log.ts'
 import type { AgentAccess, GatewayStatus } from './protocol.ts'
 
-const VERSION = '0.6.0'
+const VERSION = '0.6.1'
 const AGENT_ACCESS_VALUES: readonly AgentAccess[] = ['off', 'read-only', 'read-write']
 const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 

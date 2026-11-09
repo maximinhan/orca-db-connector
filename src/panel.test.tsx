@@ -193,3 +193,25 @@ test('registers the MCP server in Claude Code from the panel', async () => {
   assert.ok(panel.find({ text: /Added stdio MCP server orca-db/ }))
   assert.deepEqual(panel.errors, [])
 })
+
+test('hides the connection form until Edit or New is pressed', async () => {
+  const host = mockHost({
+    requests: {
+      ...quiet,
+      'connections.list': () => ({ connections: [local] })
+    }
+  })
+  panel = await mount(panelModule, { host, persisted: { plugin: { selectedId: 'local' } } })
+  assert.equal(panel.find({ label: 'Name' }), undefined)
+  assert.ok(panel.find({ label: 'SQL' }))
+
+  await panel.press({ text: 'Edit' })
+  assert.equal(panel.valueOf({ label: 'Name' }), 'Local')
+
+  await panel.press({ text: 'Cancel' })
+  assert.equal(panel.find({ label: 'Name' }), undefined)
+
+  await panel.press({ text: 'New' })
+  assert.equal(panel.valueOf({ label: 'Name' }), '')
+  assert.deepEqual(panel.errors, [])
+})
