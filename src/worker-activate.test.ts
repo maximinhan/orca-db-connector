@@ -4,8 +4,16 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import type { OrcaWorkerApi } from 'orca/worker'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import type { ApprovalRequest, QueryLogEntry } from './protocol.ts'
-import activate, { deactivate, MCP_SERVER_PATH } from './worker.ts'
+
+// The worker reads this when it loads, so set it before importing it: tests never touch ~/.
+const scratch = mkdtempSync(path.join(tmpdir(), 'orca-db-worker-'))
+process.env.ORCA_DB_DISCOVERY_FILE = path.join(scratch, 'gateway.json')
+const { default: activate, deactivate, MCP_SERVER_PATH, DISCOVERY_PATH } = await import('./worker.ts')
+process.on('exit', () => rmSync(scratch, { recursive: true, force: true }))
 
 type Handler = (input: unknown, context: { panel: unknown; signal: AbortSignal }) => unknown
 type HookHandler = (event: unknown, next: (event?: unknown) => unknown) => unknown
@@ -27,15 +35,9 @@ function fakeOrca(settings: Record<string, unknown> = {}) {
     host: {
       call: async (method: string, params: unknown) => {
         hostCalls.push({ method, params })
-        if (method === 'agents.list') {
-          return { agents: [{ terminalId: 't1', title: 'Claude Code', agent: 'claude', state: 'waiting', stateStartedAt: 0 }, { terminalId: null, title: null, agent: null, state: 'done', stateStartedAt: 0 }] }
-        }
-        if (method === 'terminal.sendText') {
-          return { accepted: true }
-        }
         return { delivered: true }
       },
-      has: (method: string) => method === 'agents.list' || method === 'terminal.sendText'
+      has: () => false
     },
     panels: {
       handle: (name: string, handler: Handler) => (handlers.set(name, handler), disposable),
@@ -139,17 +141,17 @@ test('activate wires panel requests, the gateway and the launch hook', async () 
     assert.equal(codex.continued.command, 'codex')
     assert.equal(codex.continued.env.ORCA_DB_MCP_SERVER, MCP_SERVER_PATH)
 
-    // Running agents are listed, and "connect" types the gateway details into one.
-    const agents = await request<{ agents: { terminalId: string; agent: string | null }[] }>('agents.list')
-    assert.deepEqual(agents.agents.map((agent) => [agent.terminalId, agent.agent]), [['t1', 'claude']])
-    await request('ui.hello', { locale: 'ko-KR' })
-    assert.deepEqual(await request('agents.connect', { terminalId: 't1' }), { sent: true })
-    const typed = hostCalls.find((call) => call.method === 'terminal.sendText')?.params as { terminalId: string; text: string; enter: boolean }
-    assert.equal(typed.terminalId, 't1')
-    assert.equal(typed.enter, true)
-    assert.match(typed.text, new RegExp(`Bearer ${claude.continued.env.ORCA_DB_GATEWAY_TOKEN}`))
-    assert.match(typed.text, /x-orca-agent: claude/)
-    assert.match(typed.text, /Only read statements/)
+    // The discovery file lets sessions without the env (and the MCP server after a 401) find the gateway.
+    assert.equal(DISCOVERY_PATH, process.env.ORCA_DB_DISCOVERY_FILE)
+    const discovery = JSON.parse(readFileSync(DISCOVERY_PATH, 'utf8')) as { url: string; token: string; mcpServerPath: string }
+    assert.equal(discovery.url, status.url)
+    assert.equal(discovery.token, claude.continued.env.ORCA_DB_GATEWAY_TOKEN)
+    assert.equal(discovery.mcpServerPath, MCP_SERVER_PATH)
+
+    // Registering in Claude Code without the CLI on PATH explains itself and prints the command.
+    const setup = await request<{ ok: boolean; message: string; command: string }>('claude.setup')
+    assert.equal(typeof setup.ok, 'boolean')
+    assert.match(setup.command, /^claude mcp add --scope user/)
 
     // The gateway answers with the same token the hook hands out.
     const health = await fetch(`${status.url}/health`, { headers: { authorization: `Bearer ${claude.continued.env.ORCA_DB_GATEWAY_TOKEN}` } })
@@ -159,6 +161,7 @@ test('activate wires panel requests, the gateway and the launch hook', async () 
     await deactivate()
   }
   assert.equal((storage.get('queryLog') as unknown[]).length, 3)
+  assert.equal(existsSync(DISCOVERY_PATH), false, 'deactivate removes the discovery file')
 })
 
 test('an agent write waits for the panel, notifies, and the decision reaches the agent', async () => {
@@ -214,7 +217,7 @@ test('an agent write waits for the panel, notifies, and the decision reaches the
 })
 
 test('with agent access off the hook passes launches through unchanged', async () => {
-  const { orca, hooks, request } = fakeOrca({ agentAccess: 'off' })
+  const { orca, hooks } = fakeOrca({ agentAccess: 'off' })
   await activate(orca)
   try {
     const hook = hooks.get('agent.launch.before')
@@ -222,7 +225,6 @@ test('with agent access off the hook passes launches through unchanged', async (
     let passed: unknown = 'not called'
     hook({ agent: 'claude', command: 'claude', env: {} }, (event?: unknown) => (passed = event))
     assert.equal(passed, undefined)
-    await assert.rejects(request('agents.connect', { terminalId: 't1' }), /agent access is off/)
   } finally {
     await deactivate()
   }

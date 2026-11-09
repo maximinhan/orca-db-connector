@@ -13,7 +13,7 @@ import { DbService, DEFAULT_SETTINGS } from '../src/db/service.ts'
 import { sqliteDriver } from '../src/drivers/sqlite.ts'
 import { QueryLog } from '../src/log/query-log.ts'
 import { startGateway } from '../src/gateway/server.ts'
-import { handleMessage, TOOLS } from './orca-db-mcp.mjs'
+import { createGatewayClient, handleMessage, TOOLS } from './orca-db-mcp.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const dir = mkdtempSync(path.join(tmpdir(), 'orca-db-mcp-'))
@@ -119,14 +119,31 @@ test('handleMessage validates requests and tool arguments', async () => {
   assert.equal(TOOLS.length, 3)
 })
 
-test('fails fast without the gateway env', async () => {
+test('finds the gateway through the discovery file and follows a new token after 401', async () => {
+  const file = path.join(dir, 'gateway.json')
+  const { writeFileSync } = await import('node:fs')
+  writeFileSync(file, JSON.stringify({ url: gateway.url, token: 'stale-token', startedAt: 1, mcpServerPath: 'x' }))
+  const call = createGatewayClient({}, fetch, { discoveryFile: file })
+  // The file has a stale token: the first call gets 401, the client re-reads the file and retries.
+  writeFileSync(file, JSON.stringify({ url: gateway.url, token: gateway.token, startedAt: 2, mcpServerPath: 'x' }))
+  const health = await call('GET', '/health')
+  assert.equal(health.ok, true)
+
+  writeFileSync(file, JSON.stringify({ url: gateway.url, token: 'wrong', startedAt: 3, mcpServerPath: 'x' }))
+  const wrong = createGatewayClient({}, fetch, { discoveryFile: file })
+  await assert.rejects(wrong('GET', '/health'), /unauthorized/)
+
+  assert.throws(() => createGatewayClient({}, fetch, { discoveryFile: path.join(dir, 'nope.json') }), /No gateway/)
+})
+
+test('fails fast without the gateway env or discovery file', async () => {
   const child = spawn(process.execPath, [path.join(here, 'orca-db-mcp.mjs')], {
-    env: { PATH: process.env.PATH },
+    env: { PATH: process.env.PATH, ORCA_DB_DISCOVERY_FILE: path.join(dir, 'missing.json') },
     stdio: ['pipe', 'pipe', 'pipe']
   })
   let stderr = ''
   child.stderr.on('data', (chunk) => (stderr += chunk))
   const code = await new Promise((resolve) => child.once('exit', resolve))
   assert.equal(code, 1)
-  assert.match(stderr, /ORCA_DB_GATEWAY_URL/)
+  assert.match(stderr, /No gateway/)
 })

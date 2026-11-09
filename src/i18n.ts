@@ -88,14 +88,16 @@ const en = {
   accessReadOnly: 'read-only',
   accessReadWrite: 'read and write',
   gatewayHelp:
-    'Agents launched from Orca get ORCA_DB_GATEWAY_URL, ORCA_DB_GATEWAY_TOKEN and ORCA_DB_MCP_SERVER; Claude Code also gets the orca-db MCP tools. Agent writes wait for your approval here unless the connection allows them at once. Change access in the plugin settings.',
-  runningAgents: 'Running agents',
-  runningAgentsHelp:
-    'Agents started before this plugin was enabled have no gateway access. "Connect" types the gateway address, token and curl usage into that agent\'s terminal; the orca-db MCP tools need the agent to be restarted from Orca.',
-  noRunningAgents: 'No agents in the focused workspace.',
-  connect: 'Connect',
-  connected: (title: string) => `Connection details sent to ${title}.`,
-  refresh: 'Refresh',
+    'Agents launched from Orca get ORCA_DB_GATEWAY_URL, ORCA_DB_GATEWAY_TOKEN and ORCA_DB_MCP_SERVER in their environment, and Claude Code gets the orca-db MCP tools. Agent writes wait for your approval here unless the connection allows them at once. Change access in the plugin settings.',
+  claudeSetup: 'Claude Code',
+  claudeSetupHelp:
+    'Register the orca-db MCP server in Claude Code\'s user settings once, and every Claude Code session on this machine gets the tools, however it was started. Sessions that are already open pick it up after a restart: /exit, then `claude --continue` keeps the conversation. Orca-launched sessions get it anyway through the launch hook.',
+  claudeSetupButton: 'Register in Claude Code',
+  claudeSetupManual: 'Or run this in a terminal:',
+  otherAgents: 'Other agents',
+  otherAgentsHelp:
+    'Register the same MCP server once; it finds the gateway through the discovery file below, so no token is stored and worker restarts are followed automatically.',
+  discoveryFile: 'Discovery file',
   agentWantsToWrite: (agent: string, where: string) => `${agent} wants to write to ${where}`,
   anAgent: 'An agent',
   statement: 'Statement',
@@ -210,13 +212,15 @@ const ko: Dictionary = {
   accessReadWrite: '읽기와 쓰기',
   gatewayHelp:
     'Orca에서 실행한 에이전트는 ORCA_DB_GATEWAY_URL, ORCA_DB_GATEWAY_TOKEN, ORCA_DB_MCP_SERVER를 받고, Claude Code는 orca-db MCP 도구도 받습니다. 연결이 즉시 허용하지 않는 한 에이전트 쓰기는 여기서 승인을 기다립니다. 권한은 플러그인 설정에서 바꿉니다.',
-  runningAgents: '실행 중인 에이전트',
-  runningAgentsHelp:
-    '이 플러그인을 켜기 전에 시작된 에이전트는 게이트웨이 접근 정보가 없습니다. "연결"을 누르면 그 에이전트 터미널에 게이트웨이 주소·토큰·curl 사용법을 입력합니다. orca-db MCP 도구를 쓰려면 Orca에서 에이전트를 다시 시작해야 합니다.',
-  noRunningAgents: '현재 워크스페이스에 에이전트가 없습니다.',
-  connect: '연결',
-  connected: (title) => `${title}에 접속 정보를 보냈습니다.`,
-  refresh: '새로 고침',
+  claudeSetup: 'Claude Code',
+  claudeSetupHelp:
+    'orca-db MCP 서버를 Claude Code 사용자 설정에 한 번 등록하면, 어떻게 시작했든 이 컴퓨터의 모든 Claude Code 세션이 도구를 갖습니다. 이미 열려 있는 세션은 다시 시작해야 반영됩니다: /exit 후 `claude --continue` 를 실행하면 대화가 이어집니다. Orca 에서 실행한 세션은 훅으로 어차피 받습니다.',
+  claudeSetupButton: 'Claude Code에 등록',
+  claudeSetupManual: '또는 터미널에서 직접 실행:',
+  otherAgents: '다른 에이전트',
+  otherAgentsHelp:
+    '같은 MCP 서버를 한 번 등록하세요. 서버는 아래 디스커버리 파일로 게이트웨이를 찾으므로 토큰을 저장하지 않고 워커 재시작도 자동으로 따라갑니다.',
+  discoveryFile: '디스커버리 파일',
   agentWantsToWrite: (agent, where) => `${agent}이(가) ${where}에 쓰기를 요청합니다`,
   anAgent: '에이전트',
   statement: 'SQL 문',

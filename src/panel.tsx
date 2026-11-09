@@ -39,7 +39,6 @@ import {
   type GatewayStatus,
   type QueryLogEntry,
   type QueryResult,
-  type RunningAgent,
   type SchemaTable
 } from './protocol'
 
@@ -60,8 +59,8 @@ const note = atom<Note | null>(null)
 const busy = atom(false)
 const gateway = atom<GatewayStatus | null>(null)
 const approvals = atom<ApprovalRequest[]>([])
-const runningAgents = atom<RunningAgent[]>([])
-const agentNote = atom<Note | null>(null)
+const setupNote = atom<Note | null>(null)
+const setupBusy = atom(false)
 
 // Keyed memory atoms: a half-typed form survives a hot reload while developing.
 const draftName = atom('draft.name', '')
@@ -128,10 +127,6 @@ async function refreshGateway(): Promise<void> {
 
 async function refreshApprovals(): Promise<void> {
   set(approvals, (await plugin.request('approvals.list')).approvals)
-}
-
-async function refreshAgents(): Promise<void> {
-  set(runningAgents, (await plugin.request('agents.list')).agents)
 }
 
 async function refreshLog(): Promise<void> {
@@ -347,12 +342,15 @@ async function decide(id: string, approve: boolean): Promise<void> {
   }
 }
 
-async function connectAgent(agent: RunningAgent): Promise<void> {
+async function setupClaude(): Promise<void> {
+  set(setupBusy, true)
   try {
-    await plugin.request('agents.connect', { terminalId: agent.terminalId })
-    set(agentNote, { tone: 'success', text: strings().connected(agent.title) })
+    const answer = await plugin.request('claude.setup', undefined, { timeoutMs: 60_000 })
+    set(setupNote, { tone: answer.ok ? 'success' : 'danger', text: answer.message })
   } catch (error) {
-    set(agentNote, { tone: 'danger', text: errorText(error) })
+    set(setupNote, { tone: 'danger', text: errorText(error) })
+  } finally {
+    set(setupBusy, false)
   }
 }
 
@@ -395,7 +393,6 @@ export function setup(ctx: PanelContext): void {
   void refresh().catch(fail)
   void refreshGateway().catch(() => set(gateway, null))
   void refreshApprovals().catch(() => set(approvals, []))
-  void refreshAgents().catch(() => set(runningAgents, []))
   void refreshLog().catch(() => set(logEntries, []))
 }
 
@@ -458,8 +455,14 @@ function GatewaySection() {
       </Callout>
     )
   }
-  const agents = read(runningAgents)
-  const message = read(agentNote)
+  const message = read(setupNote)
+  const manual = `claude mcp add --scope user --env ELECTRON_RUN_AS_NODE=1 orca-db -- node "${status.mcpServerPath}"`
+  const others = [
+    `# Codex CLI`,
+    `codex mcp add orca-db -- node "${status.mcpServerPath}"`,
+    `# Gemini CLI`,
+    `gemini mcp add orca-db node "${status.mcpServerPath}"`
+  ].join('\n')
   return (
     <Collapsible title={t.agentAccess} description={t.gatewayDescription(status.url ?? '', accessLabel(status.agentAccess))}>
       <Stack gap="sm">
@@ -468,40 +471,33 @@ function GatewaySection() {
           items={[
             { label: t.gateway, value: status.url ?? '', code: true },
             { label: t.access, value: accessLabel(status.agentAccess) },
-            { label: t.mcpServer, value: status.mcpServerPath, code: true }
+            { label: t.mcpServer, value: status.mcpServerPath, code: true },
+            { label: t.discoveryFile, value: status.discoveryPath, code: true }
           ]}
         />
         <Text muted size="xs">
           {t.gatewayHelp}
         </Text>
-        <Row justify="between">
-          <Heading level={3}>{t.runningAgents}</Heading>
-          <Button variant="ghost" icon="refresh" onPress={() => void refreshAgents().catch(fail)}>
-            {t.refresh}
-          </Button>
-        </Row>
+        <Heading level={3}>{t.claudeSetup}</Heading>
         <Text muted size="xs">
-          {t.runningAgentsHelp}
+          {t.claudeSetupHelp}
         </Text>
+        <Row gap="xs">
+          <Button variant="outline" icon="link" onPress={() => void setupClaude()} disabled={read(setupBusy)}>
+            {t.claudeSetupButton}
+          </Button>
+          {read(setupBusy) ? <Spinner label={t.working} /> : null}
+        </Row>
         {message ? <Callout tone={message.tone}>{message.text}</Callout> : null}
-        {agents.length === 0 ? (
-          <Text muted>{t.noRunningAgents}</Text>
-        ) : (
-          <List label={t.runningAgents}>
-            {agents.map((agent) => (
-              <ListItem key={agent.terminalId} title={agent.title} description={`${agent.agent ?? t.agent} · ${agent.state}`} icon="agent">
-                <Button
-                  variant="outline"
-                  icon="link"
-                  onPress={() => void connectAgent(agent)}
-                  disabled={status.agentAccess === 'off'}
-                >
-                  {t.connect}
-                </Button>
-              </ListItem>
-            ))}
-          </List>
-        )}
+        <Text muted size="xs">
+          {t.claudeSetupManual}
+        </Text>
+        <CodeView code={manual} language="shell" label={t.claudeSetup} />
+        <Heading level={3}>{t.otherAgents}</Heading>
+        <Text muted size="xs">
+          {t.otherAgentsHelp}
+        </Text>
+        <CodeView code={others} language="shell" label={t.otherAgents} />
       </Stack>
     </Collapsible>
   )

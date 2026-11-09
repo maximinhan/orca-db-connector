@@ -99,35 +99,38 @@ error, and the rows: the worker keeps the rows of the last 50 queries (capped by
 query**), so recent results can be inspected without running them again. Entries persist in the
 plugin's storage across restarts; rows do not. **Clear log** forgets both.
 
-## Agents that were already running
+## Sessions the launch hook never saw
 
-The hook fires only when Orca launches an agent, so an agent started before the plugin was
-enabled (or before the worker restarted and changed the token) has no `ORCA_DB_*` variables and
-no MCP tools. The panel's **Agent access** section lists the agents in the focused workspace
-(`agents.list`, the `agent:read` capability) with a **Connect** button that types a short
-message into that agent's terminal (`terminal.sendText`, the `terminal:send` capability): the
-gateway URL, the bearer token, the three curl calls and the current write rules. The agent can
-then use the gateway from its shell at once. It is sent as a prompt, so it lands in the agent's
-transcript; the token is the loopback-only one of this worker start.
+The hook runs only when Orca launches an agent, so a Claude Code started before the plugin was
+enabled, started by hand in a terminal, or restored by Orca has no `ORCA_DB_*` variables. Two
+pieces cover those:
 
-The `orca-db` MCP tools cannot be added to a running session: restart the agent from Orca (a new
-agent tab) to get them. Orca's own restores and resumes of saved sessions are not launches and
-do not run the hook either.
+- **Discovery file.** While the worker runs it keeps `~/.orca-db-connector/gateway.json` (mode
+  `0600`) with the gateway URL and token. The MCP server reads it when its environment has no
+  gateway, and re-reads it once after a `401`, so a worker restart that changed the token is
+  followed without any reconfiguration.
+- **User-scope registration.** **Register in Claude Code** in the panel runs
+  `claude mcp add --scope user --env ELECTRON_RUN_AS_NODE=1 orca-db -- <orca binary> <mcp server>`,
+  which puts the server in Claude Code's user settings: every Claude Code on the machine loads it,
+  however it was started. The same command is printed for running by hand when the `claude` CLI is
+  not on the worker's PATH.
+
+A Claude Code session that is already open does not load new MCP servers: run `/exit` and then
+`claude --continue` (or `--resume`) in the same terminal to keep the conversation with the tools
+added. There is no way to inject a tool into a running session.
 
 ## Claude Code
 
-Nothing to do: with **Add the MCP server to Claude Code** on (the default), every Claude Code
-launch from Orca gets `--mcp-config` pointing at a file the worker wrote. Run `/mcp` inside
-Claude Code to see `orca-db` and its three tools. If you launched Claude Code with your own
-`--mcp-config`, the plugin leaves the command alone and you can add the server yourself (below).
+With **Add the MCP server to Claude Code** on (the default), every Claude Code launch from Orca
+also gets `--mcp-config` pointing at a file the worker wrote, so the tools are there even without
+the user-scope registration. Run `/mcp` inside Claude Code to see `orca-db` and its three tools.
 A waiting write counts against Claude Code's MCP tool timeout; raise `MCP_TOOL_TIMEOUT` if your
 approvals take longer than its default.
 
 ## Other agents
 
-Every agent gets the environment variables, so register the MCP server once with a command that
-inherits them. The token changes when the worker restarts, so never copy it into a config file;
-let the server read it from the environment at run time.
+Register the MCP server once; it finds the gateway through the environment Orca gives launched
+agents or, failing that, the discovery file, so the registration holds no token.
 
 ```sh
 # Codex CLI

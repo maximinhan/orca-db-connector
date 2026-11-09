@@ -11,6 +11,7 @@ const gateway: GatewayStatus = {
   url: 'http://127.0.0.1:4321',
   agentAccess: 'read-only',
   mcpServerPath: '/plugins/db/mcp/orca-db-mcp.mjs',
+  discoveryPath: '/home/me/.orca-db-connector/gateway.json',
   error: null
 }
 
@@ -18,7 +19,6 @@ const quiet = {
   'gateway.status': () => gateway,
   'approvals.list': () => ({ approvals: [] }),
   'log.list': () => ({ entries: [] }),
-  'agents.list': () => ({ agents: [] }),
   'ui.hello': () => ({ ok: true as const })
 }
 
@@ -173,25 +173,23 @@ test('shows an agent write waiting for approval and decides it', async () => {
   assert.deepEqual(panel.errors, [])
 })
 
-test('sends the gateway details to a running agent', async () => {
-  const sent: string[] = []
+test('registers the MCP server in Claude Code from the panel', async () => {
+  let calls = 0
   const host = mockHost({
     requests: {
       ...quiet,
       'connections.list': () => ({ connections: [] }),
-      'agents.list': () => ({ agents: [{ terminalId: 't1', title: 'Claude Code', agent: 'claude', state: 'waiting' }] }),
-      'agents.connect': ({ terminalId }) => {
-        sent.push(terminalId)
-        return { sent: true }
+      'claude.setup': () => {
+        calls += 1
+        return { ok: true, message: 'Added stdio MCP server orca-db', command: 'claude mcp add …' }
       }
     }
   })
   panel = await mount(panelModule, { host })
-  assert.ok(panel.find({ text: /Claude Code/ }))
 
-  await panel.press({ text: 'Connect' })
+  await panel.press({ text: 'Register in Claude Code' })
 
-  assert.deepEqual(sent, ['t1'])
-  assert.ok(panel.find({ text: /Connection details sent to Claude Code/ }))
+  assert.equal(calls, 1)
+  assert.ok(panel.find({ text: /Added stdio MCP server orca-db/ }))
   assert.deepEqual(panel.errors, [])
 })

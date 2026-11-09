@@ -6,22 +6,25 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { agentConnectText } from './agent/connect-text.ts'
+import { registerClaudeMcpServer } from './agent/claude-setup.ts'
+import { defaultDiscoveryPath, removeDiscoveryFile, writeDiscoveryFile } from './agent/discovery.ts'
 import { claudeMcpConfig, decorateAgentLaunch, type AgentLaunchEvent } from './agent/launch-hook.ts'
 import { ApprovalQueue } from './approvals/queue.ts'
 import { SecretsManager } from './aws/secrets-manager.ts'
 import { ConnectionStore, validateConnection } from './connections.ts'
 import { DbService, DEFAULT_SETTINGS, type DbServiceSettings } from './db/service.ts'
-import { errorMessage, hostError } from './errors.ts'
+import { errorMessage } from './errors.ts'
 import { startGateway, type Gateway } from './gateway/server.ts'
 import { QueryLog } from './log/query-log.ts'
-import type { AgentAccess, GatewayStatus, RunningAgent } from './protocol.ts'
+import type { AgentAccess, GatewayStatus } from './protocol.ts'
 
-const VERSION = '0.5.0'
+const VERSION = '0.6.0'
 const AGENT_ACCESS_VALUES: readonly AgentAccess[] = ['off', 'read-only', 'read-write']
 const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 
 export const MCP_SERVER_PATH = path.resolve(import.meta.dirname, '..', 'mcp', 'orca-db-mcp.mjs')
+/** Overridable so tests never touch the real home directory. */
+export const DISCOVERY_PATH = process.env.ORCA_DB_DISCOVERY_FILE || defaultDiscoveryPath()
 
 type Settings = DbServiceSettings & { claudeMcp: boolean; approvalTimeoutMs: number }
 
@@ -150,6 +153,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       url: gateway?.url ?? null,
       agentAccess: settings.agentAccess,
       mcpServerPath: MCP_SERVER_PATH,
+      discoveryPath: DISCOVERY_PATH,
       error: gatewayError
     })
   )
@@ -163,37 +167,10 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
     return { ok: true as const }
   })
 
-  // Agents already running when the plugin (or this worker) started: list them, and type the
-  // gateway details into one so it can use curl right away.
-  const listAgents = async (): Promise<RunningAgent[]> => {
-    if (!orca.host.has('agents.list')) {
-      return []
-    }
-    const answer = (await orca.host.call('agents.list')) as { agents?: { terminalId: string | null; title: string | null; agent: string | null; state: RunningAgent['state'] }[] }
-    return (answer.agents ?? [])
-      .filter((agent) => typeof agent.terminalId === 'string')
-      .map((agent) => ({ terminalId: agent.terminalId as string, title: agent.title ?? agent.agent ?? agent.terminalId as string, agent: agent.agent, state: agent.state }))
-  }
-  orca.panels.handle('agents.list', async () => ({ agents: await listAgents() }))
-  orca.panels.handle('agents.connect', async ({ terminalId }) => {
-    if (gateway === null || settings.agentAccess === 'off') {
-      throw hostError('not_permitted', korean ? '에이전트 접근이 꺼져 있거나 게이트웨이가 실행되지 않았습니다' : 'agent access is off or the gateway is not running')
-    }
-    if (typeof terminalId !== 'string' || terminalId === '') {
-      throw hostError('invalid_params', 'terminalId is required')
-    }
-    const target = (await listAgents()).find((agent) => agent.terminalId === terminalId) ?? null
-    const text = agentConnectText({
-      gatewayUrl: gateway.url,
-      token: gateway.token,
-      mcpServerPath: MCP_SERVER_PATH,
-      agent: target?.agent ?? null,
-      access: settings.agentAccess
-    })
-    const answer = (await orca.host.call('terminal.sendText', { terminalId, text, enter: true })) as { accepted?: boolean }
-    orca.log(`gateway details sent to terminal ${terminalId} (${target?.agent ?? 'unknown agent'})`)
-    return { sent: answer.accepted !== false }
-  })
+  // Registers the MCP server in Claude Code's user settings, for sessions the launch hook never saw.
+  orca.panels.handle('claude.setup', () =>
+    registerClaudeMcpServer({ mcpServerPath: MCP_SERVER_PATH, execPath: process.execPath })
+  )
 
   // The agent gateway: loopback HTTP with a per-start token.
   try {
@@ -209,6 +186,11 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       mcpConfigPath = writeClaudeMcpConfig(gateway.url, gateway.token)
     } catch (error) {
       orca.log(`could not write the Claude Code MCP config: ${errorMessage(error)}`)
+    }
+    try {
+      writeDiscoveryFile(DISCOVERY_PATH, { url: gateway.url, token: gateway.token, startedAt: Date.now(), mcpServerPath: MCP_SERVER_PATH })
+    } catch (error) {
+      orca.log(`could not write the gateway discovery file: ${errorMessage(error)}`)
     }
   } catch (error) {
     gatewayError = errorMessage(error)
@@ -251,6 +233,7 @@ export async function deactivate(): Promise<void> {
     rmSync(mcpConfigPath, { force: true })
     mcpConfigPath = null
   }
+  removeDiscoveryFile(DISCOVERY_PATH)
   await log?.flush()
   log = null
 }

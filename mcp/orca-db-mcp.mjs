@@ -3,10 +3,13 @@
 // list_connections, describe_schema and run_query. It needs ORCA_DB_GATEWAY_URL and
 // ORCA_DB_GATEWAY_TOKEN, which the plugin sets on every agent Orca launches. Plain Node, no
 // dependencies: JSON-RPC 2.0 messages, one per line, on stdin and stdout.
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { pathToFileURL } from 'node:url'
 
-export const SERVER_INFO = { name: 'orca-db-connector', version: '0.5.0' }
+export const SERVER_INFO = { name: 'orca-db-connector', version: '0.6.0' }
 const PROTOCOL_VERSION = '2025-06-18'
 
 export const TOOLS = [
@@ -43,23 +46,54 @@ export const TOOLS = [
   }
 ]
 
-export function createGatewayClient(env = process.env, fetchImpl = fetch) {
-  const url = env.ORCA_DB_GATEWAY_URL
-  const token = env.ORCA_DB_GATEWAY_TOKEN
-  const agent = env.ORCA_DB_AGENT
-  if (!url || !token) {
-    throw new Error('ORCA_DB_GATEWAY_URL and ORCA_DB_GATEWAY_TOKEN are not set: start this agent from Orca with the DB Connector plugin enabled')
+/** Where the plugin's worker writes the gateway address and token for sessions without the env. */
+export function defaultDiscoveryFile(env = process.env) {
+  return env.ORCA_DB_DISCOVERY_FILE || path.join(homedir(), '.orca-db-connector', 'gateway.json')
+}
+
+function readDiscovery(file) {
+  try {
+    const json = JSON.parse(readFileSync(file, 'utf8'))
+    return typeof json?.url === 'string' && typeof json?.token === 'string' ? { url: json.url, token: json.token } : null
+  } catch {
+    return null
   }
-  return async function call(method, route, body) {
-    const response = await fetchImpl(`${url.replace(/\/$/, '')}${route}`, {
+}
+
+/**
+ * Resolves the gateway from ORCA_DB_GATEWAY_URL/TOKEN, else from the discovery file; after a 401
+ * (the worker restarted and changed its token) it re-reads the file once and retries.
+ */
+export function createGatewayClient(env = process.env, fetchImpl = fetch, { discoveryFile = defaultDiscoveryFile(env) } = {}) {
+  const agent = env.ORCA_DB_AGENT
+  let gateway =
+    env.ORCA_DB_GATEWAY_URL && env.ORCA_DB_GATEWAY_TOKEN
+      ? { url: env.ORCA_DB_GATEWAY_URL, token: env.ORCA_DB_GATEWAY_TOKEN }
+      : readDiscovery(discoveryFile)
+  if (gateway === null) {
+    throw new Error(
+      `No gateway: ORCA_DB_GATEWAY_URL and ORCA_DB_GATEWAY_TOKEN are not set and ${discoveryFile} is missing. Enable the DB Connector plugin in Orca (it writes that file while its worker runs).`
+    )
+  }
+  const send = async (method, route, body) =>
+    fetchImpl(`${gateway.url.replace(/\/$/, '')}${route}`, {
       method,
       headers: {
-        authorization: `Bearer ${token}`,
+        authorization: `Bearer ${gateway.token}`,
         'content-type': 'application/json',
         ...(agent ? { 'x-orca-agent': agent } : {})
       },
       body: body === undefined ? undefined : JSON.stringify(body)
     })
+  return async function call(method, route, body) {
+    let response = await send(method, route, body)
+    if (response.status === 401) {
+      const fresh = readDiscovery(discoveryFile)
+      if (fresh !== null && (fresh.url !== gateway.url || fresh.token !== gateway.token)) {
+        gateway = fresh
+        response = await send(method, route, body)
+      }
+    }
     const text = await response.text()
     let json
     try {
@@ -179,7 +213,8 @@ if (isMain) {
   if (process.argv.includes('--help')) {
     process.stdout.write(
       `orca-db-mcp: MCP server (stdio) for the Orca DB Connector plugin.\n` +
-        `Needs ORCA_DB_GATEWAY_URL and ORCA_DB_GATEWAY_TOKEN, set by Orca on agents it launches.\n` +
+        `Finds the gateway through ORCA_DB_GATEWAY_URL and ORCA_DB_GATEWAY_TOKEN (set by Orca on agents it launches)\n` +
+        `or through ${defaultDiscoveryFile()} (written while the plugin's worker runs).\n` +
         `Tools: ${TOOLS.map((tool) => tool.name).join(', ')}\n`
     )
     process.exit(0)

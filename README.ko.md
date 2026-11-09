@@ -24,9 +24,10 @@
   [docs/agent-access.ko.md](docs/agent-access.ko.md) 참고.
 - **드라이버**: SQLite 는 Node 내장 `node:sqlite`, PostgreSQL(`pg`)과 MySQL(`mysql2`)은
   `build/build.mjs` 가 `vendor/` 에 번들합니다 (설치된 플러그인은 `node_modules` 를 가질 수 없음).
-- **실행 중인 에이전트**: 플러그인을 켜기 전에 시작된 에이전트는 훅의 환경 변수를 받지 못하므로, 패널이 현재
-  워크스페이스의 에이전트를 나열하고 **연결** 버튼으로 그 터미널에 게이트웨이 주소·토큰·curl 사용법을 입력합니다.
-  MCP 도구 자체는 Orca 에서 에이전트를 다시 시작해야 생깁니다.
+- **Orca 가 띄운 세션뿐 아니라 모든 Claude Code**: **Claude Code에 등록** 버튼이 MCP 서버를 Claude Code 사용자
+  설정에 추가하고(`claude mcp add --scope user`), 서버는 워커가 실행 중일 때 기록하는 디스커버리 파일
+  (`~/.orca-db-connector/gateway.json`)로 게이트웨이를 찾으므로 토큰을 저장하지 않고 워커 재시작도 따라갑니다.
+  이미 열려 있는 세션은 `/exit` 후 `claude --continue` 로 반영됩니다.
 - **언어**: 패널과 알림은 Orca 의 UI 언어를 따릅니다(한국어 또는 영어).
 - **자격 증명**: Orca 암호화 secrets 에 보관한 비밀번호, 또는 RDS 형식의 **AWS Secrets Manager** 시크릿.
   후자는 host, port, username, dbname, password 를 모두 시크릿에서 가져오며 폼에서 해당 필드가 사라집니다. AWS 자격 증명은 환경
@@ -37,7 +38,7 @@
 
 | 경로 | 역할 |
 | --- | --- |
-| `orca-plugin.json` | 매니페스트(format 2): `trusted-worker`, 패널 1, 훅 1, 설정 5, capability 6 |
+| `orca-plugin.json` | 매니페스트(format 2): `trusted-worker`, 패널 1, 훅 1, 설정 5, capability 4 |
 | `src/worker.ts` | 워커 진입점(`main`): 패널 요청, 게이트웨이, 런치 훅 |
 | `src/panel.tsx` | 사이드바 패널(components UI, 빌드 없음) |
 | `src/protocol.ts` | 패널 ↔ 워커 계약, 양쪽에서 타입 검사 |
@@ -50,7 +51,7 @@
 | `src/drivers/` | `sqlite.ts`, `postgres.ts`, `mysql.ts` 와 지연 로딩 레지스트리 |
 | `src/gateway/` | 에이전트가 호출하는 루프백 HTTP API |
 | `src/agent/launch-hook.ts` | `agent.launch.before` 가 에이전트 명령/환경에 추가하는 것 |
-| `src/agent/connect-text.ts` | **연결** 버튼이 실행 중인 에이전트 터미널에 입력하는 내용 |
+| `src/agent/discovery.ts`, `src/agent/claude-setup.ts` | 게이트웨이 디스커버리 파일과 Claude Code 사용자 범위 등록 |
 | `src/i18n.ts` | 패널 문구의 영문/한글 사전. Orca UI 언어로 선택 |
 | `mcp/orca-db-mcp.mjs` | 에이전트가 실행하는 stdio MCP 서버(순수 Node, 의존성 없음) |
 | `build/` → `vendor/` | 드라이버 번들과 라이선스(`THIRD_PARTY_NOTICES.txt`) |
@@ -96,7 +97,7 @@ npm run build:vendor        # build/package.json 변경 후 vendor/ 재생성
 
 1. `orca plugin validate .` 통과, 커밋·푸시
 2. `orca-plugin.json` 의 `version` 을 올려 커밋한 뒤 태그:
-   `git tag -a v0.5.0 -m v0.5.0 && git push origin v0.5.0`
+   `git tag -a v0.6.0 -m v0.6.0 && git push origin v0.6.0`
 3. 토픽 추가: `gh repo edit maximinhan/orca-db-connector --add-topic orca-plugin`
 4. https://www.onorca.dev/plugins/maximinhan/orca-db-connector 확인
 

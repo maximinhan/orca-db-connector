@@ -88,6 +88,8 @@ export type GatewayStatus = {
   agentAccess: AgentAccess
   /** Absolute path of the stdio MCP server agents run. */
   mcpServerPath: string
+  /** File the MCP server reads the gateway address and token from when its environment has none. */
+  discoveryPath: string
   error: string | null
 }
 
@@ -111,13 +113,12 @@ export type ApprovalRequest = {
 
 export type QueryLogStatus = 'ok' | 'error' | 'denied' | 'timeout'
 
-/** An agent running in the focused workspace, from Orca's `agents.list`. */
-export type RunningAgent = {
-  terminalId: string
-  title: string
-  /** Orca's agent id (`claude`, `codex`, ...) or null when unknown. */
-  agent: string | null
-  state: 'working' | 'blocked' | 'waiting' | 'done'
+/** What registering the orca-db MCP server in Claude Code's user settings did. */
+export type ClaudeSetupResult = {
+  ok: boolean
+  message: string
+  /** The command to run by hand when the `claude` CLI was not found. */
+  command: string
 }
 
 export type QueryLogEntry = {
@@ -180,10 +181,8 @@ declare module 'orca' {
     'log.clear': { output: { cleared: number } }
     /** Tells the worker Orca's UI language, for notifications. */
     'ui.hello': { input: { locale: string }; output: { ok: true } }
-    /** Agents running in the focused workspace. */
-    'agents.list': { output: { agents: RunningAgent[] } }
-    /** Types the gateway address, token and usage into a running agent's terminal. */
-    'agents.connect': { input: { terminalId: string }; output: { sent: boolean } }
+    /** Registers the orca-db MCP server in Claude Code's user settings (`claude mcp add --scope user`). */
+    'claude.setup': { output: ClaudeSetupResult }
   }
   // oxlint-disable-next-line typescript/consistent-type-definitions -- declaration merging needs an interface
   interface PluginPanelEvents {
