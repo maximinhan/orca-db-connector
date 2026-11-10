@@ -4,7 +4,7 @@
   "execution": "trusted-worker",
   "id": "db-connector",
   "name": "DB Connector",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Save PostgreSQL, MySQL and SQLite connections (passwords in Orca's secrets or from AWS Secrets Manager), browse schemas and run queries from a sidebar panel, and let the agents Orca launches query them through a local MCP server. Agent writes wait for your approval unless a connection allows them; every query is logged with its rows.",
   "author": {
     "name": "maximinhan",
@@ -12,6 +12,7 @@
   },
   "repository": "https://github.com/maximinhan/orca-db-connector",
   "license": "MIT",
+  "icon": "images/icon.png",
   "engines": {
     "orca": ">=1.4.248"
   },
@@ -100,5 +101,9 @@
     {
       "kind": "notifications:show"
     }
-  ]
+  ],
+  "cover": {
+    "path": "images/cover.png",
+    "alt": "The DB Connector logo, a database cylinder with a plug, beside the plugin name and its features"
+  }
 }

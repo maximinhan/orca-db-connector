@@ -1,6 +1,6 @@
 {
   "name": "orca-db-connector",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "description": "Orca plugin: PostgreSQL, MySQL and SQLite connections, schema browsing and queries from a sidebar panel, plus a local gateway and MCP server for the agents Orca launches.",
   "type": "module",
